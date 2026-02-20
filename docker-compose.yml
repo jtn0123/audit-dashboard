@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  audit-dashboard:
+    build: .
+    container_name: audit-dashboard
+    ports:
+      - "3002:3002"
+    volumes:
+      - /home/clawdbot/clawd/audits:/data
+    environment:
+      - DATA_DIR=/data
+      - PORT=3002
+    restart: unless-stopped
