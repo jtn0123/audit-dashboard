@@ -17,7 +17,29 @@ const AGENT_ORDER = ['security', 'quality', 'infra', 'dependencies', 'lighthouse
 
 function navigate(path) { window.location.hash = path; }
 function getRoute() { return window.location.hash.slice(1) || '/'; }
-async function api(url) { const r = await fetch(url); return r.json(); }
+async function api(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`API error: ${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+function showError(message, detail) {
+  app.innerHTML = `<div class="empty"><div class="icon">⚠️</div><h3>${message}</h3><p style="color:var(--text-muted);max-width:500px">${detail || 'Try refreshing the page.'}</p><button class="refresh-btn" onclick="route()" style="margin-top:16px">↻ Retry</button></div>`;
+}
+
+function renderCardError(agent, error) {
+  const a = AGENTS[agent] || { icon: '📄', label: agent };
+  return `<div class="card card-critical" style="cursor:default">
+    <div class="card-header"><span class="agent-label">${a.icon} ${a.label}</span><span class="status-dot red"></span></div>
+    <div class="card-body"><span class="card-grade" style="color:var(--red)">ERR</span></div>
+    <div class="card-summary" style="color:var(--red)">Failed to load</div>
+  </div>`;
+}
+
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled rejection:', e.reason);
+  showError('Something went wrong', e.reason?.message || String(e.reason));
+});
 function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
 
 function statusClass(status) {
@@ -85,14 +107,16 @@ async function route() {
 // Dashboard
 async function renderDashboard() {
   app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading audit data…</div>';
-  const dates = await api('/api/dates');
+  let dates;
+  try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load audit data', e.message); return; }
   if (!dates.length) {
     app.innerHTML = '<div class="empty"><div class="icon">📋</div><h3>No audit data yet</h3><p>Run a nightly audit to see results here.</p></div>';
     return;
   }
 
   const today = dates[0];
-  const reports = await api(`/api/report/${today}`);
+  let reports;
+  try { reports = await api(`/api/report/${today}`); } catch (e) { showError('Failed to load reports', e.message); return; }
 
   // Update header meta
   const meta = reports.find(r => r.agent === 'meta');
@@ -148,7 +172,7 @@ async function renderDashboard() {
   html += '<div class="cards">';
   for (const agent of AGENT_ORDER) {
     const r = byAgent[agent];
-    if (!r) continue;
+    if (!r) { html += renderCardError(agent, 'No data'); continue; }
     const a = AGENTS[agent];
     const sc = statusClass(r.status);
     const display = r.grade || (r.score != null ? r.score : '—');
@@ -236,7 +260,8 @@ async function renderReport(date, agent) {
   app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading report…</div>';
 
   if (!agent) {
-    const reports = await api(`/api/report/${date}`);
+    let reports;
+    try { reports = await api(`/api/report/${date}`); } catch (e) { showError('Failed to load reports', e.message); return; }
     let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>Reports for ${date}</h1></div></div>`;
     html += '<div class="cards">';
     for (const r of reports) {
@@ -266,7 +291,8 @@ async function renderReport(date, agent) {
   } catch {}
 
   // Fallback JSON
-  const report = await api(`/api/report/${date}/${agent}`);
+  let report;
+  try { report = await api(`/api/report/${date}/${agent}`); } catch (e) { showError('Failed to load report', e.message); return; }
   if (report.error) { app.innerHTML = '<div class="empty"><div class="icon">🔍</div><h3>Report not found</h3></div>'; return; }
   const a = AGENTS[agent] || { icon: '📄', label: agent };
   app.innerHTML = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date} · Score: ${report.score ?? '—'}</div></div></div>
@@ -276,7 +302,8 @@ async function renderReport(date, agent) {
 // Trends
 async function renderTrends() {
   app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading trends…</div>';
-  const trends = await api('/api/trends');
+  let trends;
+  try { trends = await api('/api/trends'); } catch (e) { showError('Failed to load trends', e.message); return; }
 
   let html = '<div class="dash-header"><h1>Trends</h1></div>';
   html += '<div class="chart-grid"><div class="chart-box"><h3>Agent Scores Over Time</h3><canvas id="scoreChart"></canvas></div></div>';
@@ -313,13 +340,15 @@ async function renderTrends() {
 // History
 async function renderHistory() {
   app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading history…</div>';
-  const dates = await api('/api/dates');
+  let dates;
+  try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load history', e.message); return; }
 
   let html = '<div class="dash-header"><h1>Audit History</h1></div>';
   html += '<div class="history-list">';
 
   for (const date of dates) {
-    const reports = await api(`/api/report/${date}`);
+    let reports;
+    try { reports = await api(`/api/report/${date}`); } catch { continue; }
     const meta = reports.find(r => r.agent === 'meta');
     const agentReports = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest');
     const dur = meta?.raw?.durationSeconds;
