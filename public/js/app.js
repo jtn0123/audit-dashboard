@@ -37,7 +37,7 @@ function renderCardError(agent, error) {
 }
 
 window.addEventListener('unhandledrejection', (e) => {
-  console.error('Unhandled rejection:', e.reason);
+  console.warn('Unhandled rejection:', e.reason);
   showError('Something went wrong', e.reason?.message || String(e.reason));
 });
 function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
