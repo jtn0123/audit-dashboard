@@ -1,0 +1,8 @@
+{
+  "summary": { "total": 3, "critical": 1, "high": 1, "medium": 1, "low": 0 },
+  "findings": [
+    { "severity": "critical", "title": "SQL injection" },
+    { "severity": "high", "title": "XSS" },
+    { "severity": "medium", "title": "Open redirect" }
+  ]
+}
