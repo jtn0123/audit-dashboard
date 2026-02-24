@@ -76,7 +76,7 @@ function normalize(name, data) {
         return base;
     }
   } catch (e) {
-    console.error(`normalize error for ${name}:`, e.message);
+    console.warn(`normalize error for ${name}:`, e.message);
     return { ...base, status: 'unknown', score: null, summary: 'Error normalizing' };
   }
 }
@@ -93,7 +93,7 @@ app.get('/api/report/:date', (req, res) => {
         const name = f.replace('.json', '');
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
         reports.push(normalize(name, data));
-      } catch (e) { console.error(`Error reading ${f}:`, e.message); }
+      } catch (e) { console.warn(`Error reading ${f}:`, e.message); }
     }
     res.json(reports);
   } catch (e) { res.status(500).json({ error: e.message }); }
