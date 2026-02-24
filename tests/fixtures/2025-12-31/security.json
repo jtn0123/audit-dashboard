@@ -1,0 +1,7 @@
+{
+  "summary": { "total": 2, "critical": 0, "high": 1, "medium": 1, "low": 0 },
+  "findings": [
+    { "severity": "high", "title": "XSS" },
+    { "severity": "medium", "title": "CSRF vulnerability" }
+  ]
+}

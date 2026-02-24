@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 const app = $('app');
 let charts = [];
+let repoFilter = sessionStorage.getItem('repoFilter') || 'all';
 
 const AGENTS = {
   security:     { icon: '🔒', label: 'Security' },
@@ -165,6 +166,14 @@ async function route() {
   } else if (path === '/history') {
     $('nav-history')?.classList.add('active');
     await renderHistory();
+  } else if (path === '/findings') {
+    $('nav-findings')?.classList.add('active');
+    await renderFindings();
+  } else if (path === '/calendar') {
+    $('nav-calendar')?.classList.add('active');
+    await renderCalendar();
+  } else if (path.startsWith('/diff')) {
+    await renderDiff(path.split('/')[2]);
   } else if (path.startsWith('/report/')) {
     const parts = path.split('/').filter(Boolean);
     await renderReport(parts[1], parts[2]);
@@ -221,8 +230,14 @@ async function renderDashboard() {
   // Header
   html += `<div class="dash-header">
     <div><h1>Nightly Audit</h1><div class="date-info">${today}${meta?.raw?.durationSeconds ? ' · ' + formatDuration(meta.raw.durationSeconds) : ''}</div></div>
-    <button class="refresh-btn" onclick="route()">↻ Refresh</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="refresh-btn diff-btn" onclick="navigate('/diff/${today}')">🔀 What Changed</button>
+      <button class="refresh-btn" onclick="route()">↻ Refresh</button>
+    </div>
   </div>`;
+
+  // Repo filter
+  html += renderRepoFilter();
 
   // Health Score Hero
   html += renderHealthHero(todayScore, today, delta);
@@ -500,6 +515,276 @@ async function renderHistory() {
   app.innerHTML = html;
   app.classList.add('anim-fade-in');
   app.addEventListener('animationend', () => app.classList.remove('anim-fade-in'), { once: true });
+}
+
+// Repo Filter
+const REPOS = ['VoltTracker', 'satellite-processor', 'MegaBonk', 'neuhard.dev'];
+
+function renderRepoFilter() {
+  const btns = ['all', ...REPOS].map(r => {
+    const active = repoFilter === r ? 'active' : '';
+    const label = r === 'all' ? 'All' : r;
+    return `<button class="repo-btn ${active}" onclick="setRepoFilter('${r}')">${label}</button>`;
+  }).join('');
+  return `<div class="repo-filter">${btns}</div>`;
+}
+
+function setRepoFilter(repo) {
+  repoFilter = repo;
+  sessionStorage.setItem('repoFilter', repo);
+  route();
+}
+
+function matchesRepoFilter(text) {
+  if (repoFilter === 'all') return true;
+  if (!text) return true;
+  return text.toLowerCase().includes(repoFilter.toLowerCase());
+}
+
+// Diff View
+async function renderDiff(date) {
+  showSkeleton('generic');
+  let dates;
+  try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load dates', e.message); return; }
+  if (dates.length < 2) {
+    app.innerHTML = '<div class="empty"><div class="icon">🔀</div><h3>Need at least 2 audit dates to compare</h3></div>';
+    return;
+  }
+
+  const today = date || dates[0];
+  const todayIdx = dates.indexOf(today);
+  const yesterday = dates[todayIdx + 1] || dates[1];
+
+  let todayReports, yesterdayReports;
+  try {
+    todayReports = await api(`/api/report/${today}`);
+    yesterdayReports = await api(`/api/report/${yesterday}`);
+  } catch (e) { showError('Failed to load reports', e.message); return; }
+
+  const todayByAgent = {};
+  const yesterdayByAgent = {};
+  todayReports.forEach(r => { todayByAgent[r.agent] = r; });
+  yesterdayReports.forEach(r => { yesterdayByAgent[r.agent] = r; });
+
+  // Score changes
+  let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>🔀 What Changed</h1><div class="date-info">${yesterday} → ${today}</div></div></div>`;
+
+  // Agent score changes
+  html += '<div class="section"><h2>Score Changes</h2><div class="diff-grid">';
+  for (const agent of AGENT_ORDER) {
+    const t = todayByAgent[agent];
+    const y = yesterdayByAgent[agent];
+    const tScore = t?.score ?? null;
+    const yScore = y?.score ?? null;
+    const delta = (tScore != null && yScore != null) ? tScore - yScore : null;
+    const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+    const cls = delta > 0 ? 'improved' : delta < 0 ? 'regressed' : 'unchanged';
+    const a = AGENTS[agent] || { icon: '📄', label: agent };
+    html += `<div class="diff-card ${cls}">
+      <div class="diff-agent">${a.icon} ${a.label}</div>
+      <div class="diff-scores">${yScore ?? '—'} → ${tScore ?? '—'}</div>
+      <div class="diff-delta ${cls}">${arrow} ${delta != null ? Math.abs(delta) : '—'}</div>
+    </div>`;
+  }
+  html += '</div></div>';
+
+  // New findings (in today but not yesterday)
+  const todayFindings = collectFindings(todayReports);
+  const yesterdayFindings = collectFindings(yesterdayReports);
+  const yesterdayTitles = new Set(yesterdayFindings.map(f => (f.title || '').toLowerCase()));
+  const todayTitles = new Set(todayFindings.map(f => (f.title || '').toLowerCase()));
+
+  const newFindings = todayFindings.filter(f => !yesterdayTitles.has((f.title || '').toLowerCase()));
+  const resolvedFindings = yesterdayFindings.filter(f => !todayTitles.has((f.title || '').toLowerCase()));
+
+  if (newFindings.length) {
+    html += `<div class="section"><h2 style="color:var(--red)">🆕 New Findings <span class="count">${newFindings.length}</span></h2>`;
+    newFindings.forEach(f => { html += renderFinding(f); });
+    html += '</div>';
+  }
+  if (resolvedFindings.length) {
+    html += `<div class="section"><h2 style="color:var(--green)">✅ Resolved <span class="count">${resolvedFindings.length}</span></h2>`;
+    resolvedFindings.forEach(f => { html += renderFinding(f); });
+    html += '</div>';
+  }
+  if (!newFindings.length && !resolvedFindings.length) {
+    html += '<div class="empty" style="padding:40px"><div class="icon">✨</div><h3>No finding changes</h3></div>';
+  }
+
+  app.innerHTML = html;
+  bindFindingToggles();
+}
+
+function collectFindings(reports) {
+  const findings = [];
+  for (const r of reports) {
+    if (Array.isArray(r.findings)) {
+      findings.push(...r.findings.map(f => ({ ...f, agent: r.agent })));
+    }
+    if (r.findings && typeof r.findings === 'object' && !Array.isArray(r.findings)) {
+      for (const arr of Object.values(r.findings)) {
+        if (Array.isArray(arr)) findings.push(...arr.map(f => ({ ...f, agent: r.agent })));
+      }
+    }
+    if (Array.isArray(r.priorities)) {
+      findings.push(...r.priorities.map(p => ({ severity: p.severity || 'medium', title: p.title, repo: p.repo, agent: r.agent })));
+    }
+  }
+  return findings;
+}
+
+// Findings Timeline
+async function renderFindings() {
+  showSkeleton('generic');
+  let findings;
+  try { findings = await api('/api/findings'); } catch (e) { showError('Failed to load findings', e.message); return; }
+
+  let sortBy = 'severity';
+  renderFindingsView(findings, sortBy);
+}
+
+function renderFindingsView(findings, sortBy) {
+  const filtered = repoFilter === 'all' ? findings : findings.filter(f => matchesRepoFilter(f.repo));
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === 'severity') return (severityRank(a.severity) - severityRank(b.severity));
+    if (sortBy === 'firstSeen') return a.firstSeen.localeCompare(b.firstSeen);
+    if (sortBy === 'status') {
+      const order = { 'new': 0, recurring: 1, resolved: 2 };
+      return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+    }
+    return 0;
+  });
+
+  let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>📋 Findings Timeline</h1><div class="date-info">${filtered.length} findings tracked</div></div></div>`;
+  html += renderRepoFilter();
+  html += `<div class="sort-bar">Sort: 
+    <button class="sort-btn ${sortBy === 'severity' ? 'active' : ''}" onclick="sortFindings('severity')">Severity</button>
+    <button class="sort-btn ${sortBy === 'firstSeen' ? 'active' : ''}" onclick="sortFindings('firstSeen')">First Seen</button>
+    <button class="sort-btn ${sortBy === 'status' ? 'active' : ''}" onclick="sortFindings('status')">Status</button>
+  </div>`;
+
+  if (!sorted.length) {
+    html += '<div class="empty"><div class="icon">✨</div><h3>No findings</h3></div>';
+  } else {
+    html += '<div class="findings-timeline">';
+    for (const f of sorted) {
+      const statusCls = f.status === 'new' ? 'badge-high' : f.status === 'recurring' ? 'badge-medium' : 'badge-info';
+      const statusLabel = f.status.charAt(0).toUpperCase() + f.status.slice(1);
+      html += `<div class="timeline-item">
+        <div class="timeline-header">
+          ${severityBadge(f.severity)}
+          <span class="badge ${statusCls}">${statusLabel}</span>
+          <span class="finding-title">${f.title}</span>
+        </div>
+        <div class="timeline-meta">
+          <span>${f.repo || '—'}</span>
+          <span>First: ${f.firstSeen}</span>
+          <span>Last: ${f.lastSeen}</span>
+          <span>×${f.occurrences}</span>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  app.innerHTML = html;
+  // Store sort state for sort button clicks
+  window._findingsData = findings;
+  window._findingsSort = sortBy;
+}
+
+function sortFindings(by) {
+  window._findingsSort = by;
+  renderFindingsView(window._findingsData || [], by);
+}
+
+// Heatmap Calendar
+async function renderCalendar() {
+  showSkeleton('generic');
+  let trends;
+  try { trends = await api('/api/trends'); } catch (e) { showError('Failed to load data', e.message); return; }
+
+  const dateScores = {};
+  for (const date of (trends.dates || [])) {
+    const agents = Object.values(trends.data || {});
+    let total = 0, count = 0;
+    let hasCritical = false;
+    for (const agentData of agents) {
+      const entry = agentData.find(d => d.date === date);
+      if (entry) {
+        if (entry.score != null) { total += entry.score; count++; }
+        if (entry.status === 'critical') hasCritical = true;
+      }
+    }
+    const avg = count ? Math.round(total / count) : null;
+    dateScores[date] = { avg, hasCritical, status: hasCritical ? 'critical' : avg == null ? 'none' : avg >= 80 ? 'ok' : avg >= 50 ? 'warning' : 'critical' };
+  }
+
+  // Build 90-day grid
+  const now = new Date();
+  const days = [];
+  for (let i = 89; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    const dow = d.getDay();
+    days.push({ date: ds, dow, info: dateScores[ds] || { avg: null, status: 'none' } });
+  }
+
+  let html = '<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate(\'/\');return false">← Dashboard</a><h1>📅 Audit Calendar</h1><div class="date-info">Last 90 days</div></div></div>';
+  html += '<div class="calendar-heatmap"><div class="calendar-grid">';
+
+  // Group by weeks
+  const weeks = [];
+  let currentWeek = [];
+  for (const day of days) {
+    if (currentWeek.length && day.dow === 0) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    currentWeek.push(day);
+  }
+  if (currentWeek.length) weeks.push(currentWeek);
+
+  // Pad first week
+  if (weeks[0] && weeks[0][0]) {
+    const pad = weeks[0][0].dow;
+    for (let i = 0; i < pad; i++) weeks[0].unshift(null);
+  }
+
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  html += '<div class="cal-labels">';
+  for (let i = 0; i < 7; i++) html += `<div class="cal-label">${dayLabels[i]}</div>`;
+  html += '</div>';
+
+  html += '<div class="cal-weeks">';
+  for (const week of weeks) {
+    html += '<div class="cal-week">';
+    for (const day of week) {
+      if (!day) {
+        html += '<div class="cal-day empty"></div>';
+      } else {
+        const cls = `cal-${day.info.status}`;
+        const title = `${day.date}${day.info.avg != null ? ' — Score: ' + day.info.avg : ' — No data'}`;
+        const hasData = day.info.status !== 'none';
+        html += `<div class="cal-day ${cls}" title="${title}" ${hasData ? `onclick="navigate('/report/${day.date}')"` : ''}></div>`;
+      }
+    }
+    html += '</div>';
+  }
+  html += '</div></div>';
+
+  // Legend
+  html += `<div class="cal-legend">
+    <span class="cal-legend-item"><span class="cal-day cal-none" style="display:inline-block"></span> No data</span>
+    <span class="cal-legend-item"><span class="cal-day cal-ok" style="display:inline-block"></span> Good</span>
+    <span class="cal-legend-item"><span class="cal-day cal-warning" style="display:inline-block"></span> Warning</span>
+    <span class="cal-legend-item"><span class="cal-day cal-critical" style="display:inline-block"></span> Critical</span>
+  </div>`;
+
+  html += '</div>';
+  app.innerHTML = html;
 }
 
 // Init
