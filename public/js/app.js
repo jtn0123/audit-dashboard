@@ -81,6 +81,75 @@ function severityRank(s) {
   return map[s] ?? 5;
 }
 
+// Skeleton loaders
+function skeletonDashboard() {
+  return `<div class="health-hero">
+    <div class="skeleton skeleton-circle" style="width:160px;height:160px"></div>
+    <div class="skeleton skeleton-text w40" style="margin-top:12px;width:120px"></div>
+  </div>
+  <div class="skeleton skeleton-text w60" style="height:20px;margin-bottom:16px;width:180px"></div>
+  <div class="cards">
+    ${Array(7).fill('<div class="skeleton" style="height:120px"></div>').join('')}
+  </div>
+  <div style="margin-top:32px">
+    ${Array(3).fill('<div class="skeleton skeleton-text w80" style="height:48px;margin-bottom:8px"></div>').join('')}
+  </div>`;
+}
+
+function skeletonGeneric(n = 4) {
+  return `<div class="skeleton skeleton-text w60" style="height:24px;margin-bottom:20px;width:200px"></div>
+  ${Array(n).fill('<div class="skeleton" style="height:80px;margin-bottom:8px"></div>').join('')}`;
+}
+
+function showSkeleton(type) {
+  app.innerHTML = type === 'dashboard' ? skeletonDashboard() : skeletonGeneric();
+}
+
+// Health score hero
+function calcHealthScore(reports) {
+  const scores = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest' && r.score != null).map(r => r.score);
+  if (!scores.length) return null;
+  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+}
+
+function renderHealthHero(score, date, delta) {
+  if (score == null) return '';
+  const color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--yellow)' : 'var(--red)';
+  const r = 70, c = 2 * Math.PI * r;
+  const offset = c * (1 - score / 100);
+  let deltaHtml = '';
+  if (delta != null && delta !== 0) {
+    const cls = delta > 0 ? 'up' : 'down';
+    const arrow = delta > 0 ? '↑' : '↓';
+    deltaHtml = `<div class="health-delta ${cls}">${arrow}${Math.abs(delta)} from yesterday</div>`;
+  } else if (delta === 0) {
+    deltaHtml = `<div class="health-delta flat">No change from yesterday</div>`;
+  }
+  return `<div class="health-hero anim-fade-in">
+    <div class="health-gauge">
+      <svg viewBox="0 0 160 160">
+        <circle class="gauge-bg" cx="80" cy="80" r="${r}"/>
+        <circle class="gauge-fg" cx="80" cy="80" r="${r}" stroke="${color}"
+          stroke-dasharray="${c}" stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="health-gauge-label">
+        <div class="health-gauge-score" style="color:${color}">${score}</div>
+        <div class="health-gauge-sub">Overall Health</div>
+      </div>
+    </div>
+    <div style="color:var(--text-dim);font-size:.82rem;margin-top:6px">${date}</div>
+    ${deltaHtml}
+  </div>`;
+}
+
+// Animate cards after insert
+function animateCards() {
+  document.querySelectorAll('.card').forEach((card, i) => {
+    card.classList.add('anim-card');
+    card.style.animationDelay = `${i * 50}ms`;
+  });
+}
+
 // Router
 async function route() {
   destroyCharts();
@@ -106,7 +175,7 @@ async function route() {
 
 // Dashboard
 async function renderDashboard() {
-  app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading audit data…</div>';
+  showSkeleton('dashboard');
   let dates;
   try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load audit data', e.message); return; }
   if (!dates.length) {
@@ -117,6 +186,17 @@ async function renderDashboard() {
   const today = dates[0];
   let reports;
   try { reports = await api(`/api/report/${today}`); } catch (e) { showError('Failed to load reports', e.message); return; }
+
+  // Calculate health score and delta
+  const todayScore = calcHealthScore(reports);
+  let delta = null;
+  if (dates.length > 1) {
+    try {
+      const yesterdayReports = await api(`/api/report/${dates[1]}`);
+      const yesterdayScore = calcHealthScore(yesterdayReports);
+      if (todayScore != null && yesterdayScore != null) delta = todayScore - yesterdayScore;
+    } catch {}
+  }
 
   // Update header meta
   const meta = reports.find(r => r.agent === 'meta');
@@ -142,6 +222,9 @@ async function renderDashboard() {
     <div><h1>Nightly Audit</h1><div class="date-info">${today}${meta?.raw?.durationSeconds ? ' · ' + formatDuration(meta.raw.durationSeconds) : ''}</div></div>
     <button class="refresh-btn" onclick="route()">↻ Refresh</button>
   </div>`;
+
+  // Health Score Hero
+  html += renderHealthHero(todayScore, today, delta);
 
   // Digest / Portfolio Health
   const digest = byAgent.digest;
@@ -226,6 +309,7 @@ async function renderDashboard() {
   }
 
   app.innerHTML = html;
+  animateCards();
   bindFindingToggles();
 }
 
@@ -257,7 +341,7 @@ function bindFindingToggles() {
 
 // Report Detail
 async function renderReport(date, agent) {
-  app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading report…</div>';
+  showSkeleton('generic');
 
   if (!agent) {
     let reports;
@@ -301,7 +385,7 @@ async function renderReport(date, agent) {
 
 // Trends
 async function renderTrends() {
-  app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading trends…</div>';
+  showSkeleton('generic');
   let trends;
   try { trends = await api('/api/trends'); } catch (e) { showError('Failed to load trends', e.message); return; }
 
@@ -335,11 +419,13 @@ async function renderTrends() {
     }));
 
   charts.push(new Chart($('scoreChart'), { type: 'line', data: { datasets }, options: opts }));
+  app.classList.add('anim-fade-in');
+  app.addEventListener('animationend', () => app.classList.remove('anim-fade-in'), { once: true });
 }
 
 // History
 async function renderHistory() {
-  app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading history…</div>';
+  showSkeleton('generic');
   let dates;
   try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load history', e.message); return; }
 
@@ -369,6 +455,8 @@ async function renderHistory() {
 
   html += '</div>';
   app.innerHTML = html;
+  app.classList.add('anim-fade-in');
+  app.addEventListener('animationend', () => app.classList.remove('anim-fade-in'), { once: true });
 }
 
 // Init
