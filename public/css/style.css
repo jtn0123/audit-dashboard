@@ -298,6 +298,17 @@ nav .ext-link { color: var(--text-muted); font-size: 0.85rem; }
   .health-gauge-score { font-size: 2rem; }
 }
 
+/* Score Bars */
+.score-bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 8px; overflow: hidden; }
+.score-bar-fill { height: 100%; border-radius: 2px; width: 0; transition: width 0.6s ease; }
+
+/* Sparklines */
+.sparkline-canvas { display: block; margin-top: 8px; }
+
+@media (max-width: 600px) {
+  .sparkline-canvas { width: 60px; height: 20px; }
+}
+
 /* Embed mode */
 body.embed nav { display: none; }
 body.embed .container { max-width: none; padding: 8px; }

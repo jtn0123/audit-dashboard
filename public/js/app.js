@@ -184,8 +184,9 @@ async function renderDashboard() {
   }
 
   const today = dates[0];
-  let reports;
+  let reports, trends;
   try { reports = await api(`/api/report/${today}`); } catch (e) { showError('Failed to load reports', e.message); return; }
+  try { trends = await api('/api/trends'); } catch { trends = null; }
 
   // Calculate health score and delta
   const todayScore = calcHealthScore(reports);
@@ -271,6 +272,8 @@ async function renderDashboard() {
         ${r.grade && r.score != null ? `<span class="card-score">${r.score}/100</span>` : ''}
       </div>
       <div class="card-summary">${r.summary || ''}</div>
+      ${r.score != null ? `<div class="score-bar"><div class="score-bar-fill" data-score="${r.score}" style="background:${scoreColor(r.score)}"></div></div>` : ''}
+      <canvas class="sparkline-canvas" data-agent="${agent}" width="80" height="24"></canvas>
     </div>`;
   }
   html += '</div>';
@@ -311,6 +314,46 @@ async function renderDashboard() {
   app.innerHTML = html;
   animateCards();
   bindFindingToggles();
+
+  // Animate score bars
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.score-bar-fill[data-score]').forEach(el => {
+      el.style.width = el.dataset.score + '%';
+    });
+  });
+
+  // Draw sparklines
+  if (trends?.data) {
+    document.querySelectorAll('.sparkline-canvas[data-agent]').forEach(canvas => {
+      const agentData = trends.data[canvas.dataset.agent];
+      if (!agentData || agentData.length < 2) { canvas.style.display = 'none'; return; }
+      const scores = agentData.slice(-7).map(d => d.score);
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const min = Math.min(...scores), max = Math.max(...scores);
+      const range = max - min || 1;
+      const pad = 2;
+
+      // Determine color from trend
+      const first = scores[0], last = scores[scores.length - 1];
+      const color = last < 50 ? 'var(--red)' : last < first - 5 ? 'var(--yellow)' : 'var(--green)';
+      const resolved = getComputedStyle(document.documentElement).getPropertyValue(
+        last < 50 ? '--red' : last < first - 5 ? '--yellow' : '--green'
+      ).trim();
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      ctx.strokeStyle = resolved;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      scores.forEach((s, i) => {
+        const x = pad + (i / (scores.length - 1)) * (w - pad * 2);
+        const y = h - pad - ((s - min) / range) * (h - pad * 2);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+  }
 }
 
 function renderFinding(f) {
