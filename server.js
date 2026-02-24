@@ -6,8 +6,11 @@ const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const PORT = process.env.PORT || 3002;
 
+const pkg = require('./package.json');
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/version', (req, res) => res.json({ version: pkg.version, buildDate: process.env.BUILD_DATE || null }));
 
 // List dates
 app.get('/api/dates', (req, res) => {

@@ -787,6 +787,15 @@ async function renderCalendar() {
   app.innerHTML = html;
 }
 
+// Version display
+async function loadVersion() {
+  try {
+    const { version } = await api('/api/version');
+    const el = document.getElementById('version-footer');
+    if (el && version) el.textContent = `v${version}`;
+  } catch {}
+}
+
 // Init
 window.addEventListener('hashchange', route);
-window.addEventListener('DOMContentLoaded', route);
+window.addEventListener('DOMContentLoaded', () => { route(); loadVersion(); });
