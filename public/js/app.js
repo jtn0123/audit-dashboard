@@ -123,7 +123,7 @@ function renderHealthHero(score, date, delta) {
     const arrow = delta > 0 ? '↑' : '↓';
     deltaHtml = `<div class="health-delta ${cls}">${arrow}${Math.abs(delta)} from yesterday</div>`;
   } else if (delta === 0) {
-    deltaHtml = `<div class="health-delta flat">No change from yesterday</div>`;
+    deltaHtml = '<div class="health-delta flat">No change from yesterday</div>';
   }
   return `<div class="health-hero anim-fade-in">
     <div class="health-gauge">
