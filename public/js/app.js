@@ -130,9 +130,9 @@ function showSkeleton(type) {
 
 // Health score hero
 function calcHealthScore(reports) {
-  const scores = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest' && r.score != null).map(r => r.score);
+  const scores = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest' && r.score != null).map(r => Math.min(100, r.score));
   if (!scores.length) return null;
-  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  return Math.min(100, Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
 }
 
 function renderHealthHero(score, date, delta) {
@@ -383,7 +383,7 @@ async function renderDashboard() {
   // Animate score bars
   requestAnimationFrame(() => {
     document.querySelectorAll('.score-bar-fill[data-score]').forEach(el => {
-      el.style.width = el.dataset.score + '%';
+      el.style.width = Math.min(100, el.dataset.score) + '%';
     });
   });
 

@@ -37,9 +37,9 @@ function getReportsForDate(date) {
 
 // Helper: calc health score from reports
 function calcHealthScore(reports) {
-  const scores = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest' && r.score != null).map(r => r.score);
+  const scores = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest' && r.score != null).map(r => Math.min(100, r.score));
   if (!scores.length) return null;
-  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  return Math.min(100, Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
 }
 
 // Helper: get meta info
@@ -149,15 +149,24 @@ function normalize(name, data) {
           score, summary: `${s.total||0} findings: ${s.critical||0}C / ${s.high||0}H / ${s.medium||0}M / ${s.low||0}L`,
           findings: data.findings || [], findingCounts: s };
       }
-      case 'quality':
-        return { ...base, status: (data.score||0) >= 85 ? 'ok' : (data.score||0) >= 70 ? 'warning' : 'critical',
-          score: data.score||0, grade: data.grade, summary: data.summary || '', repos: data.repos || [] };
+      case 'quality': {
+        // repos can be dict {repoName: {grade, ...}} or array
+        const repos = data.repos || {};
+        const repoEntries = Array.isArray(repos) ? repos : Object.entries(repos).map(([name, v]) => ({ name, ...v }));
+        const gradeMap = { 'A+': 97, 'A': 95, 'A-': 92, 'B+': 88, 'B': 85, 'B-': 82, 'C+': 78, 'C': 75, 'C-': 72, 'D+': 68, 'D': 65, 'D-': 62, 'F': 40 };
+        const scores = repoEntries.map(r => r.score ?? gradeMap[r.grade] ?? 0).filter(s => s > 0);
+        const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : (data.score || 0);
+        const avgGrade = data.grade || (avgScore >= 90 ? 'A' : avgScore >= 80 ? 'B' : avgScore >= 70 ? 'C' : avgScore >= 60 ? 'D' : 'F');
+        return { ...base, status: avgScore >= 85 ? 'ok' : avgScore >= 70 ? 'warning' : 'critical',
+          score: avgScore, grade: avgGrade, summary: data.summary || `${repoEntries.length} repos analyzed`, repos: repoEntries };
+      }
       case 'infra': {
         const ciEntries = Object.values(data.ci || {});
-        const avgCI = ciEntries.length ? ciEntries.reduce((a,c) => a + (c.successRate||0), 0) / ciEntries.length : 0;
+        // successRate comes as 0-100 percentage, normalize to 0-1
+        const avgCI = ciEntries.length ? ciEntries.reduce((a,c) => a + (c.successRate||0), 0) / ciEntries.length / 100 : 0;
         const containers = data.containers || [];
         const running = containers.filter(c => c.state === 'running').length;
-        const score = Math.round(avgCI * 70 + (running === containers.length && containers.length > 0 ? 30 : 0));
+        const score = Math.min(100, Math.round(avgCI * 70 + (running === containers.length && containers.length > 0 ? 30 : 0)));
         const hasCrit = (data.alerts||[]).some(a => a.severity === 'critical');
         return { ...base, status: hasCrit ? 'critical' : avgCI < 0.7 ? 'warning' : 'ok',
           score, summary: `${running}/${containers.length} containers · CI avg ${Math.round(avgCI*100)}%`,
@@ -178,14 +187,26 @@ function normalize(name, data) {
         return { ...base, status: avg >= 80 ? 'ok' : avg >= 50 ? 'warning' : 'critical',
           score: avg, summary: `Avg perf: ${avg}`, sites };
       }
-      case 'consistency':
-        return { ...base, status: (data.consistencyScore||0) >= 70 ? 'ok' : (data.consistencyScore||0) >= 50 ? 'warning' : 'critical',
-          score: data.consistencyScore||0, summary: data.summary || '',
+      case 'consistency': {
+        const cScore = data.consistencyScore ?? data.score ?? 0;
+        return { ...base, status: cScore >= 70 ? 'ok' : cScore >= 50 ? 'warning' : 'critical',
+          score: cScore, summary: data.summary || '',
           findings: data.findings || {}, recommendations: data.recommendations || [] };
-      case 'roadmap':
-        return { ...base, status: (data.portfolioHealth||0) >= 70 ? 'ok' : (data.portfolioHealth||0) >= 50 ? 'warning' : 'critical',
-          score: data.portfolioHealth||0, summary: `Portfolio health: ${data.portfolioHealth||0}%`,
-          healthScores: data.healthScores || {}, priorities: data.priorities || [], quickWins: data.quickWins || [] };
+      }
+      case 'roadmap': {
+        // portfolioHealth can be a number or derive from projectHealth object
+        let phScore = data.portfolioHealth ?? 0;
+        let healthScores = data.healthScores || {};
+        if (!phScore && data.projectHealth && typeof data.projectHealth === 'object') {
+          const entries = Object.entries(data.projectHealth);
+          healthScores = Object.fromEntries(entries.map(([k, v]) => [k, v.score ?? 0]));
+          const vals = Object.values(healthScores);
+          phScore = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+        }
+        return { ...base, status: phScore >= 70 ? 'ok' : phScore >= 50 ? 'warning' : 'critical',
+          score: phScore, summary: `Portfolio health: ${phScore}%`,
+          healthScores, priorities: data.priorities || [], quickWins: data.quickWins || [] };
+      }
       case 'digest':
         return { ...base, status: 'ok', score: null, summary: '',
           healthScores: data.healthScores || {}, topPriorities: data.topPriorities || [] };

@@ -231,7 +231,7 @@ nav .ext-link { color: var(--text-muted); font-size: 0.85rem; }
 .markdown-body blockquote { border-left: 3px solid var(--border); padding-left: 16px; color: var(--text-dim); margin-bottom: 12px; }
 
 /* Charts */
-.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.chart-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
 .chart-box {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 20px; min-height: 300px;
@@ -367,6 +367,61 @@ nav .ext-link { color: var(--text-muted); font-size: 0.85rem; }
 
 /* #8: Sparklines - larger */
 .sparkline-canvas { display: block; margin-top: 8px; }
+
+/* Sparkline tooltip */
+.sparkline-tooltip {
+  position: absolute; background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text); padding: 2px 8px; border-radius: 4px; font-size: 0.7rem;
+  white-space: nowrap; pointer-events: none; z-index: 5;
+}
+
+/* #11: Breadcrumbs */
+.breadcrumbs { padding: 8px 0; font-size: 0.82rem; margin-bottom: 8px; }
+.breadcrumbs a { color: var(--accent); text-decoration: none; }
+.breadcrumbs a:hover { text-decoration: underline; }
+.bc-sep { color: var(--text-muted); margin: 0 6px; }
+.bc-current { color: var(--text-dim); }
+
+/* #6: Severity summary bar */
+.severity-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 12px; background: var(--border); }
+.sev-seg { height: 100%; }
+.sev-critical { background: var(--red); }
+.sev-high { background: var(--orange); }
+.sev-medium { background: var(--yellow); }
+.sev-low { background: var(--accent); }
+
+/* View all link */
+.view-all-link { display: inline-block; margin-top: 12px; color: var(--accent); text-decoration: none; font-size: 0.88rem; }
+.view-all-link:hover { text-decoration: underline; }
+
+/* #10: Search input */
+.search-bar { margin-bottom: 12px; }
+.search-input {
+  width: 100%; padding: 8px 14px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 0.88rem; font-family: var(--font);
+  outline: none; transition: border-color 0.15s;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--text-muted); }
+
+/* #9: Range selector */
+.range-selector { display: flex; gap: 6px; margin-bottom: 16px; }
+.range-btn {
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; transition: all 0.15s;
+}
+.range-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.range-btn.active { color: var(--accent); border-color: var(--accent); background: rgba(88, 166, 255, 0.1); }
+
+/* #15: Nav toggle (hamburger) - hidden on desktop */
+.nav-toggle {
+  display: none; flex-direction: column; gap: 4px; background: none; border: none;
+  cursor: pointer; padding: 4px;
+}
+.nav-toggle span { display: block; width: 20px; height: 2px; background: var(--text-dim); border-radius: 1px; transition: all 0.2s; }
+.nav-toggle.active span:nth-child(1) { transform: rotate(45deg) translate(4px, 4px); }
+.nav-toggle.active span:nth-child(2) { opacity: 0; }
+.nav-toggle.active span:nth-child(3) { transform: rotate(-45deg) translate(4px, -4px); }
 
 @media (max-width: 600px) {
   .sparkline-canvas { width: 80px; height: 24px; }
