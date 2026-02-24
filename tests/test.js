@@ -111,6 +111,34 @@ describe('API tests', () => {
     assert.equal(typeof r.json.score, 'number');
   });
 
+  it('GET /api/findings returns array of finding objects', async () => {
+    const r = await getJSON(port, '/api/findings');
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.json));
+    assert.ok(r.json.length > 0);
+    const f = r.json[0];
+    assert.ok(f.title);
+    assert.ok(f.severity);
+    assert.ok(f.firstSeen);
+    assert.ok(f.lastSeen);
+    assert.ok(typeof f.occurrences === 'number');
+    assert.ok(['new', 'recurring', 'resolved'].includes(f.status));
+  });
+
+  it('GET /api/findings deduplicates by title', async () => {
+    const r = await getJSON(port, '/api/findings');
+    const titles = r.json.map(f => f.title.toLowerCase());
+    const unique = new Set(titles);
+    assert.equal(titles.length, unique.size);
+  });
+
+  it('GET /api/findings marks resolved findings correctly', async () => {
+    const r = await getJSON(port, '/api/findings');
+    // CSRF vulnerability is only in 2025-12-31, not 2026-01-01 (latest), so should be resolved
+    const csrf = r.json.find(f => f.title.toLowerCase().includes('csrf'));
+    if (csrf) assert.equal(csrf.status, 'resolved');
+  });
+
   it('Normalization: lighthouse handles dict-style sites', async () => {
     const r = await getJSON(port, '/api/report/2026-01-01/lighthouse');
     assert.equal(typeof r.json.sites, 'object');

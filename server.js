@@ -139,5 +139,82 @@ app.get('/api/trends', (req, res) => {
   } catch { res.json({ dates: [], data: {} }); }
 });
 
+// Findings timeline
+app.get('/api/findings', (_req, res) => {
+  try {
+    const entries = fs.readdirSync(DATA_DIR, { withFileTypes: true });
+    const dates = entries.filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name)).map(e => e.name).sort();
+    if (!dates.length) return res.json([]);
+    const latestDate = dates[dates.length - 1];
+    const findingsMap = {}; // key: title -> aggregated info
+
+    for (const date of dates) {
+      const dir = path.join(DATA_DIR, date);
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && f !== 'meta.json');
+      for (const f of files) {
+        try {
+          const agentName = f.replace('.json', '');
+          const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          let findings = [];
+          // Extract findings from different agent types
+          if (Array.isArray(data.findings)) {
+            findings = data.findings;
+          } else if (data.findings && typeof data.findings === 'object') {
+            // consistency has findings as object of arrays
+            for (const arr of Object.values(data.findings)) {
+              if (Array.isArray(arr)) findings.push(...arr);
+            }
+          }
+          // Also check repos for quality agent
+          if (Array.isArray(data.repos)) {
+            for (const repo of data.repos) {
+              if (Array.isArray(repo.findings)) findings.push(...repo.findings.map(ff => ({ ...ff, repo: repo.name || repo.repo })));
+            }
+          }
+          // Roadmap priorities as findings
+          if (Array.isArray(data.priorities)) {
+            findings.push(...data.priorities.map(p => ({ severity: p.severity || 'medium', title: p.title, repo: p.repo })));
+          }
+
+          for (const finding of findings) {
+            const title = finding.title || finding.id || 'Unknown';
+            const key = title.toLowerCase().trim();
+            if (!findingsMap[key]) {
+              findingsMap[key] = {
+                id: finding.id || key.slice(0, 8),
+                title,
+                severity: finding.severity || 'info',
+                repo: finding.repo || agentName,
+                firstSeen: date,
+                lastSeen: date,
+                occurrences: 1,
+                status: 'new'
+              };
+            } else {
+              findingsMap[key].lastSeen = date;
+              findingsMap[key].occurrences++;
+              if (!findingsMap[key].repo && finding.repo) findingsMap[key].repo = finding.repo;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Compute status
+    const result = Object.values(findingsMap).map(f => {
+      if (f.lastSeen !== latestDate) f.status = 'resolved';
+      else if (f.firstSeen === latestDate) f.status = 'new';
+      else f.status = 'recurring';
+      return f;
+    });
+
+    // Sort by severity
+    const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+    result.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
+
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.listen(PORT, () => console.log(`Audit dashboard on port ${PORT}`));
