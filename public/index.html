@@ -12,12 +12,18 @@
 <body>
   <nav>
     <div class="logo" onclick="navigate('/')">⬡ Audits <span>dashboard</span></div>
-    <a href="#/" onclick="navigate('/');return false" id="nav-dash">Dashboard</a>
-    <a href="#/trends" onclick="navigate('/trends');return false" id="nav-trends">Trends</a>
-    <a href="#/history" onclick="navigate('/history');return false" id="nav-history">History</a>
-    <a href="#/findings" onclick="navigate('/findings');return false" id="nav-findings">Findings</a>
-    <a href="#/calendar" onclick="navigate('/calendar');return false" id="nav-calendar">Calendar</a>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-links" id="nav-links">
+      <a href="#/" onclick="navigate('/');return false" id="nav-dash">Dashboard</a>
+      <a href="#/trends" onclick="navigate('/trends');return false" id="nav-trends">Trends</a>
+      <a href="#/history" onclick="navigate('/history');return false" id="nav-history">History</a>
+      <a href="#/findings" onclick="navigate('/findings');return false" id="nav-findings">Findings</a>
+      <a href="#/calendar" onclick="navigate('/calendar');return false" id="nav-calendar">Calendar</a>
+    </div>
     <div class="spacer"></div>
+    <span id="last-updated" style="color:var(--text-muted);font-size:.75rem;display:none"></span>
     <span id="header-meta" style="color:var(--text-muted);font-size:.8rem"></span>
   </nav>
   <div class="container" id="app">

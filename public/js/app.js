@@ -2,6 +2,8 @@ const $ = id => document.getElementById(id);
 const app = $('app');
 let charts = [];
 let repoFilter = sessionStorage.getItem('repoFilter') || 'all';
+let autoRefreshTimer = null;
+let lastRefreshTime = null;
 
 const AGENTS = {
   security:     { icon: '🔒', label: 'Security' },
@@ -82,6 +84,29 @@ function severityRank(s) {
   return map[s] ?? 5;
 }
 
+// #11: Breadcrumb navigation
+function renderBreadcrumbs(segments) {
+  // segments: [{label, hash}]
+  return `<div class="breadcrumbs">${segments.map((s, i) =>
+    i < segments.length - 1
+      ? `<a href="#${s.hash}" onclick="navigate('${s.hash}');return false">${s.label}</a><span class="bc-sep">›</span>`
+      : `<span class="bc-current">${s.label}</span>`
+  ).join('')}</div>`;
+}
+
+// #6: Severity summary bar
+function renderSeverityBar(counts) {
+  const total = (counts.critical||0) + (counts.high||0) + (counts.medium||0) + (counts.low||0);
+  if (!total) return '';
+  const pct = (n) => ((n / total) * 100).toFixed(1);
+  return `<div class="severity-bar" title="Critical: ${counts.critical||0} · High: ${counts.high||0} · Medium: ${counts.medium||0} · Low: ${counts.low||0}">
+    ${counts.critical ? `<div class="sev-seg sev-critical" style="width:${pct(counts.critical)}%"></div>` : ''}
+    ${counts.high ? `<div class="sev-seg sev-high" style="width:${pct(counts.high)}%"></div>` : ''}
+    ${counts.medium ? `<div class="sev-seg sev-medium" style="width:${pct(counts.medium)}%"></div>` : ''}
+    ${counts.low ? `<div class="sev-seg sev-low" style="width:${pct(counts.low)}%"></div>` : ''}
+  </div>`;
+}
+
 // Skeleton loaders
 function skeletonDashboard() {
   return `<div class="health-hero">
@@ -91,9 +116,6 @@ function skeletonDashboard() {
   <div class="skeleton skeleton-text w60" style="height:20px;margin-bottom:16px;width:180px"></div>
   <div class="cards">
     ${Array(7).fill('<div class="skeleton" style="height:120px"></div>').join('')}
-  </div>
-  <div style="margin-top:32px">
-    ${Array(3).fill('<div class="skeleton skeleton-text w80" style="height:48px;margin-bottom:8px"></div>').join('')}
   </div>`;
 }
 
@@ -143,7 +165,6 @@ function renderHealthHero(score, date, delta) {
   </div>`;
 }
 
-// Animate cards after insert
 function animateCards() {
   document.querySelectorAll('.card').forEach((card, i) => {
     card.classList.add('anim-card');
@@ -151,9 +172,30 @@ function animateCards() {
   });
 }
 
+// #12: Auto-refresh
+function startAutoRefresh() {
+  stopAutoRefresh();
+  lastRefreshTime = Date.now();
+  updateRefreshIndicator();
+  autoRefreshTimer = setInterval(() => {
+    lastRefreshTime = Date.now();
+    route();
+  }, 60000);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+function updateRefreshIndicator() {
+  const el = $('refresh-indicator');
+  if (el) el.textContent = 'Updated just now';
+}
+
 // Router
 async function route() {
   destroyCharts();
+  stopAutoRefresh();
   const path = getRoute();
   document.querySelectorAll('nav a[id]').forEach(a => a.classList.remove('active'));
 
@@ -180,33 +222,26 @@ async function route() {
   } else {
     await renderDashboard();
   }
+  startAutoRefresh();
 }
 
 // Dashboard
 async function renderDashboard() {
   showSkeleton('dashboard');
-  let dates;
-  try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load audit data', e.message); return; }
-  if (!dates.length) {
+  let summary;
+  try { summary = await api('/api/summary'); } catch (e) { showError('Failed to load audit data', e.message); return; }
+  if (summary.error) {
     app.innerHTML = '<div class="empty"><div class="icon">📋</div><h3>No audit data yet</h3><p>Run a nightly audit to see results here.</p></div>';
     return;
   }
 
-  const today = dates[0];
+  const today = summary.date;
   let reports, trends;
   try { reports = await api(`/api/report/${today}`); } catch (e) { showError('Failed to load reports', e.message); return; }
   try { trends = await api('/api/trends'); } catch { trends = null; }
 
-  // Calculate health score and delta
-  const todayScore = calcHealthScore(reports);
-  let delta = null;
-  if (dates.length > 1) {
-    try {
-      const yesterdayReports = await api(`/api/report/${dates[1]}`);
-      const yesterdayScore = calcHealthScore(yesterdayReports);
-      if (todayScore != null && yesterdayScore != null) delta = todayScore - yesterdayScore;
-    } catch {}
-  }
+  const todayScore = summary.healthScore;
+  const delta = summary.delta;
 
   // Update header meta
   const meta = reports.find(r => r.agent === 'meta');
@@ -222,6 +257,14 @@ async function renderDashboard() {
     }
   }
 
+  // #12: Last updated display
+  const lastRunDisplay = summary.lastRunTime ? new Date(summary.lastRunTime).toUTCString().replace('GMT', 'UTC') : '';
+  const lastUpdatedEl = $('last-updated');
+  if (lastUpdatedEl && lastRunDisplay) {
+    lastUpdatedEl.textContent = `Last audit: ${lastRunDisplay}`;
+    lastUpdatedEl.style.display = 'inline';
+  }
+
   const byAgent = {};
   reports.forEach(r => { byAgent[r.agent] = r; });
 
@@ -229,8 +272,9 @@ async function renderDashboard() {
 
   // Header
   html += `<div class="dash-header">
-    <div><h1>Nightly Audit</h1><div class="date-info">${today}${meta?.raw?.durationSeconds ? ' · ' + formatDuration(meta.raw.durationSeconds) : ''}</div></div>
+    <div><h1>Nightly Audit</h1><div class="date-info">${today}${summary.lastRunDuration ? ' · ' + formatDuration(summary.lastRunDuration) : ''}</div></div>
     <div style="display:flex;gap:8px;align-items:center">
+      <span id="refresh-indicator" style="color:var(--text-muted);font-size:.75rem"></span>
       <button class="refresh-btn diff-btn" onclick="navigate('/diff/${today}')">🔀 What Changed</button>
       <button class="refresh-btn" onclick="route()">↻ Refresh</button>
     </div>
@@ -288,17 +332,22 @@ async function renderDashboard() {
       </div>
       <div class="card-summary">${r.summary || ''}</div>
       ${r.score != null ? `<div class="score-bar"><div class="score-bar-fill" data-score="${r.score}" style="background:${scoreColor(r.score)}"></div></div>` : ''}
-      <canvas class="sparkline-canvas" data-agent="${agent}" width="80" height="24"></canvas>
+      <canvas class="sparkline-canvas" data-agent="${agent}" width="120" height="32"></canvas>
     </div>`;
   }
   html += '</div>';
 
-  // Security findings
+  // #6: Security findings - top 5 + severity bar
   const sec = byAgent.security;
   if (sec?.findings?.length) {
     const findings = [...sec.findings].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+    const counts = sec.findingCounts || {};
     html += `<div class="section"><h2>🔒 Security Findings <span class="count">${findings.length}</span></h2>`;
-    findings.forEach(f => { html += renderFinding(f); });
+    html += renderSeverityBar(counts);
+    findings.slice(0, 5).forEach(f => { html += renderFinding(f); });
+    if (findings.length > 5) {
+      html += `<a href="#/findings" onclick="navigate('/findings');return false" class="view-all-link">View all ${findings.length} findings →</a>`;
+    }
     html += '</div>';
   }
 
@@ -329,6 +378,7 @@ async function renderDashboard() {
   app.innerHTML = html;
   animateCards();
   bindFindingToggles();
+  updateRefreshIndicator();
 
   // Animate score bars
   requestAnimationFrame(() => {
@@ -337,21 +387,20 @@ async function renderDashboard() {
     });
   });
 
-  // Draw sparklines
+  // #8: Draw sparklines (120×32) with tooltips
   if (trends?.data) {
     document.querySelectorAll('.sparkline-canvas[data-agent]').forEach(canvas => {
       const agentData = trends.data[canvas.dataset.agent];
       if (!agentData || agentData.length < 2) { canvas.style.display = 'none'; return; }
-      const scores = agentData.slice(-7).map(d => d.score);
+      const recent = agentData.slice(-7);
+      const scores = recent.map(d => d.score);
       const ctx = canvas.getContext('2d');
       const w = canvas.width, h = canvas.height;
       const min = Math.min(...scores), max = Math.max(...scores);
       const range = max - min || 1;
       const pad = 2;
 
-      // Determine color from trend
       const first = scores[0], last = scores[scores.length - 1];
-      const color = last < 50 ? 'var(--red)' : last < first - 5 ? 'var(--yellow)' : 'var(--green)';
       const resolved = getComputedStyle(document.documentElement).getPropertyValue(
         last < 50 ? '--red' : last < first - 5 ? '--yellow' : '--green'
       ).trim();
@@ -361,18 +410,41 @@ async function renderDashboard() {
       ctx.strokeStyle = resolved;
       ctx.lineWidth = 1.5;
       ctx.lineJoin = 'round';
+      const points = [];
       scores.forEach((s, i) => {
         const x = pad + (i / (scores.length - 1)) * (w - pad * 2);
         const y = h - pad - ((s - min) / range) * (h - pad * 2);
+        points.push({ x, y, date: recent[i].date, score: s });
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       });
       ctx.stroke();
+
+      // Tooltip on hover
+      const tooltip = document.createElement('div');
+      tooltip.className = 'sparkline-tooltip';
+      tooltip.style.display = 'none';
+      canvas.parentElement.style.position = 'relative';
+      canvas.parentElement.appendChild(tooltip);
+
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        let closest = points[0], closestDist = Infinity;
+        for (const p of points) {
+          const d = Math.abs(p.x - mx);
+          if (d < closestDist) { closestDist = d; closest = p; }
+        }
+        tooltip.textContent = `${closest.date}: ${closest.score}`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = `${closest.x}px`;
+        tooltip.style.top = `${canvas.offsetTop - 20}px`;
+      });
+      canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
     });
   }
 }
 
 function renderFinding(f) {
-  const sev = (f.severity || 'info').toLowerCase();
   return `<div class="finding">
     <div class="finding-header">
       <span class="expand-icon">▶</span>
@@ -404,7 +476,8 @@ async function renderReport(date, agent) {
   if (!agent) {
     let reports;
     try { reports = await api(`/api/report/${date}`); } catch (e) { showError('Failed to load reports', e.message); return; }
-    let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>Reports for ${date}</h1></div></div>`;
+    let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: date, hash: `/report/${date}`}]);
+    html += `<div class="dash-header"><div><h1>Reports for ${date}</h1></div></div>`;
     html += '<div class="cards">';
     for (const r of reports) {
       if (r.agent === 'meta') continue;
@@ -420,14 +493,29 @@ async function renderReport(date, agent) {
     return;
   }
 
+  const a = AGENTS[agent] || { icon: '📄', label: agent };
+
+  // #7: Per-agent trend chart - fetch trend data
+  let trendHtml = '';
+  try {
+    const trends = await api(`/api/trends?agent=${agent}&days=14`);
+    const agentData = trends.data[agent];
+    if (agentData && agentData.length >= 2) {
+      trendHtml = `<div class="chart-box" style="margin-bottom:24px;max-height:200px"><h3>${a.label} Score Trend (Last 14 Days)</h3><canvas id="agentTrendChart" style="max-height:140px"></canvas></div>`;
+    }
+  } catch {}
+
   // Try markdown first
   try {
     const mdRes = await fetch(`/api/report/${date}/${agent}/md`);
     if (mdRes.ok) {
       const md = await mdRes.text();
-      const a = AGENTS[agent] || { icon: '📄', label: agent };
-      app.innerHTML = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date}</div></div></div>
-        <div class="markdown-body">${marked.parse(md)}</div>`;
+      let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: a.label, hash: `/report/${date}`}, {label: date, hash: `/report/${date}/${agent}`}]);
+      html += `<div class="dash-header"><div><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date}</div></div></div>`;
+      html += trendHtml;
+      html += `<div class="markdown-body">${marked.parse(md)}</div>`;
+      app.innerHTML = html;
+      renderAgentTrendChart(agent);
       return;
     }
   } catch {}
@@ -436,20 +524,81 @@ async function renderReport(date, agent) {
   let report;
   try { report = await api(`/api/report/${date}/${agent}`); } catch (e) { showError('Failed to load report', e.message); return; }
   if (report.error) { app.innerHTML = '<div class="empty"><div class="icon">🔍</div><h3>Report not found</h3></div>'; return; }
-  const a = AGENTS[agent] || { icon: '📄', label: agent };
-  app.innerHTML = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date} · Score: ${report.score ?? '—'}</div></div></div>
-    <div class="markdown-body"><pre><code>${JSON.stringify(report.raw, null, 2)}</code></pre></div>`;
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: a.label, hash: `/report/${date}`}, {label: date, hash: `/report/${date}/${agent}`}]);
+  html += `<div class="dash-header"><div><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date} · Score: ${report.score ?? '—'}</div></div></div>`;
+  html += trendHtml;
+  html += `<div class="markdown-body"><pre><code>${JSON.stringify(report.raw, null, 2)}</code></pre></div>`;
+  app.innerHTML = html;
+  renderAgentTrendChart(agent);
 }
 
-// Trends
+// #7: Render per-agent trend chart
+async function renderAgentTrendChart(agent) {
+  const canvas = $('agentTrendChart');
+  if (!canvas) return;
+  try {
+    const trends = await api(`/api/trends?agent=${agent}&days=14`);
+    const agentData = trends.data[agent];
+    if (!agentData || agentData.length < 2) return;
+
+    const colors = {
+      security: '#f85149', quality: '#3fb950', infra: '#58a6ff',
+      dependencies: '#d29922', lighthouse: '#bc8cff', consistency: '#79c0ff', roadmap: '#d2a8ff'
+    };
+    const color = colors[agent] || '#8b949e';
+
+    charts.push(new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: agentData.map(d => d.date),
+        datasets: [{
+          label: AGENTS[agent]?.label || agent,
+          data: agentData.map(d => d.score),
+          borderColor: color,
+          backgroundColor: color + '22',
+          tension: .3, fill: true, pointRadius: 4,
+          pointBackgroundColor: color
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#8b949e', maxTicksLimit: 7 }, grid: { color: 'rgba(48,54,61,.4)' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: 'rgba(48,54,61,.4)' }, min: 0, max: 100 }
+        }
+      }
+    }));
+  } catch {}
+}
+
+// #9: Trends with date range selector
 async function renderTrends() {
   showSkeleton('generic');
-  let trends;
-  try { trends = await api('/api/trends'); } catch (e) { showError('Failed to load trends', e.message); return; }
+  const defaultRange = '30';
 
-  let html = '<div class="dash-header"><h1>Trends</h1></div>';
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: 'Trends', hash: '/trends'}]);
+  html += '<div class="dash-header"><h1>Trends</h1></div>';
+  html += `<div class="range-selector">
+    <button class="range-btn" data-days="7" onclick="filterTrends(7)">7d</button>
+    <button class="range-btn active" data-days="30" onclick="filterTrends(30)">30d</button>
+    <button class="range-btn" data-days="90" onclick="filterTrends(90)">90d</button>
+    <button class="range-btn" data-days="0" onclick="filterTrends(0)">All</button>
+  </div>`;
   html += '<div class="chart-grid"><div class="chart-box"><h3>Agent Scores Over Time</h3><canvas id="scoreChart"></canvas></div></div>';
   app.innerHTML = html;
+
+  window._trendRange = 30;
+  await loadTrendChart(30);
+  app.classList.add('anim-fade-in');
+  app.addEventListener('animationend', () => app.classList.remove('anim-fade-in'), { once: true });
+}
+
+async function loadTrendChart(days) {
+  destroyCharts();
+  const url = days > 0 ? `/api/trends?days=${days}` : '/api/trends';
+  let trends;
+  try { trends = await api(url); } catch { return; }
 
   const colors = {
     security: '#f85149', quality: '#3fb950', infra: '#58a6ff',
@@ -477,8 +626,12 @@ async function renderTrends() {
     }));
 
   charts.push(new Chart($('scoreChart'), { type: 'line', data: { datasets }, options: opts }));
-  app.classList.add('anim-fade-in');
-  app.addEventListener('animationend', () => app.classList.remove('anim-fade-in'), { once: true });
+}
+
+function filterTrends(days) {
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.days) === days));
+  window._trendRange = days;
+  loadTrendChart(days);
 }
 
 // History
@@ -487,7 +640,8 @@ async function renderHistory() {
   let dates;
   try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load history', e.message); return; }
 
-  let html = '<div class="dash-header"><h1>Audit History</h1></div>';
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: 'History', hash: '/history'}]);
+  html += '<div class="dash-header"><h1>Audit History</h1></div>';
   html += '<div class="history-list">';
 
   for (const date of dates) {
@@ -541,73 +695,53 @@ function matchesRepoFilter(text) {
   return text.toLowerCase().includes(repoFilter.toLowerCase());
 }
 
-// Diff View
+// Diff View (now uses server-side API)
 async function renderDiff(date) {
   showSkeleton('generic');
-  let dates;
-  try { dates = await api('/api/dates'); } catch (e) { showError('Failed to load dates', e.message); return; }
-  if (dates.length < 2) {
-    app.innerHTML = '<div class="empty"><div class="icon">🔀</div><h3>Need at least 2 audit dates to compare</h3></div>';
-    return;
+  let diff;
+  const url = date ? `/api/diff/${date}` : null;
+  if (!url) {
+    // Get latest date
+    try {
+      const dates = await api('/api/dates');
+      if (dates.length < 2) {
+        app.innerHTML = '<div class="empty"><div class="icon">🔀</div><h3>Need at least 2 audit dates to compare</h3></div>';
+        return;
+      }
+      diff = await api(`/api/diff/${dates[0]}`);
+    } catch (e) { showError('Failed to load diff', e.message); return; }
+  } else {
+    try { diff = await api(url); } catch (e) { showError('Failed to load diff', e.message); return; }
   }
 
-  const today = date || dates[0];
-  const todayIdx = dates.indexOf(today);
-  const yesterday = dates[todayIdx + 1] || dates[1];
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: 'What Changed', hash: `/diff/${diff.date1}`}]);
+  html += `<div class="dash-header"><div><h1>🔀 What Changed</h1><div class="date-info">${diff.date2} → ${diff.date1}</div></div></div>`;
 
-  let todayReports, yesterdayReports;
-  try {
-    todayReports = await api(`/api/report/${today}`);
-    yesterdayReports = await api(`/api/report/${yesterday}`);
-  } catch (e) { showError('Failed to load reports', e.message); return; }
-
-  const todayByAgent = {};
-  const yesterdayByAgent = {};
-  todayReports.forEach(r => { todayByAgent[r.agent] = r; });
-  yesterdayReports.forEach(r => { yesterdayByAgent[r.agent] = r; });
-
-  // Score changes
-  let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>🔀 What Changed</h1><div class="date-info">${yesterday} → ${today}</div></div></div>`;
-
-  // Agent score changes
   html += '<div class="section"><h2>Score Changes</h2><div class="diff-grid">';
-  for (const agent of AGENT_ORDER) {
-    const t = todayByAgent[agent];
-    const y = yesterdayByAgent[agent];
-    const tScore = t?.score ?? null;
-    const yScore = y?.score ?? null;
-    const delta = (tScore != null && yScore != null) ? tScore - yScore : null;
+  for (const sc of diff.scoreChanges) {
+    const delta = sc.delta;
     const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
     const cls = delta > 0 ? 'improved' : delta < 0 ? 'regressed' : 'unchanged';
-    const a = AGENTS[agent] || { icon: '📄', label: agent };
+    const a = AGENTS[sc.agent] || { icon: '📄', label: sc.agent };
     html += `<div class="diff-card ${cls}">
       <div class="diff-agent">${a.icon} ${a.label}</div>
-      <div class="diff-scores">${yScore ?? '—'} → ${tScore ?? '—'}</div>
+      <div class="diff-scores">${sc.before ?? '—'} → ${sc.after ?? '—'}</div>
       <div class="diff-delta ${cls}">${arrow} ${delta != null ? Math.abs(delta) : '—'}</div>
     </div>`;
   }
   html += '</div></div>';
 
-  // New findings (in today but not yesterday)
-  const todayFindings = collectFindings(todayReports);
-  const yesterdayFindings = collectFindings(yesterdayReports);
-  const yesterdayTitles = new Set(yesterdayFindings.map(f => (f.title || '').toLowerCase()));
-  const todayTitles = new Set(todayFindings.map(f => (f.title || '').toLowerCase()));
-
-  const newFindings = todayFindings.filter(f => !yesterdayTitles.has((f.title || '').toLowerCase()));
-  const resolvedFindings = yesterdayFindings.filter(f => !todayTitles.has((f.title || '').toLowerCase()));
-
-  if (newFindings.length) {
-    html += `<div class="section"><h2 style="color:var(--red)">🆕 New Findings <span class="count">${newFindings.length}</span></h2>`;
-    newFindings.forEach(f => { html += renderFinding(f); });
+  if (diff.newFindings.length) {
+    html += `<div class="section"><h2 style="color:var(--red)">🆕 New Findings <span class="count">${diff.newFindings.length}</span></h2>`;
+    diff.newFindings.forEach(f => { html += renderFinding(f); });
     html += '</div>';
   }
-  if (resolvedFindings.length) {
-    html += `<div class="section"><h2 style="color:var(--green)">✅ Resolved <span class="count">${resolvedFindings.length}</span></h2>`;
-    resolvedFindings.forEach(f => { html += renderFinding(f); });
+  if (diff.resolvedFindings.length) {
+    html += `<div class="section"><h2 style="color:var(--green)">✅ Resolved <span class="count">${diff.resolvedFindings.length}</span></h2>`;
+    diff.resolvedFindings.forEach(f => { html += renderFinding(f); });
     html += '</div>';
   }
-  if (!newFindings.length && !resolvedFindings.length) {
+  if (!diff.newFindings.length && !diff.resolvedFindings.length) {
     html += '<div class="empty" style="padding:40px"><div class="icon">✨</div><h3>No finding changes</h3></div>';
   }
 
@@ -615,36 +749,30 @@ async function renderDiff(date) {
   bindFindingToggles();
 }
 
-function collectFindings(reports) {
-  const findings = [];
-  for (const r of reports) {
-    if (Array.isArray(r.findings)) {
-      findings.push(...r.findings.map(f => ({ ...f, agent: r.agent })));
-    }
-    if (r.findings && typeof r.findings === 'object' && !Array.isArray(r.findings)) {
-      for (const arr of Object.values(r.findings)) {
-        if (Array.isArray(arr)) findings.push(...arr.map(f => ({ ...f, agent: r.agent })));
-      }
-    }
-    if (Array.isArray(r.priorities)) {
-      findings.push(...r.priorities.map(p => ({ severity: p.severity || 'medium', title: p.title, repo: p.repo, agent: r.agent })));
-    }
-  }
-  return findings;
-}
-
-// Findings Timeline
+// #10: Findings Timeline with search
 async function renderFindings() {
   showSkeleton('generic');
   let findings;
   try { findings = await api('/api/findings'); } catch (e) { showError('Failed to load findings', e.message); return; }
 
-  let sortBy = 'severity';
-  renderFindingsView(findings, sortBy);
+  window._findingsData = findings;
+  window._findingsSort = 'severity';
+  window._findingsSearch = '';
+  renderFindingsView(findings, 'severity', '');
 }
 
-function renderFindingsView(findings, sortBy) {
-  const filtered = repoFilter === 'all' ? findings : findings.filter(f => matchesRepoFilter(f.repo));
+function renderFindingsView(findings, sortBy, searchQuery) {
+  let filtered = repoFilter === 'all' ? findings : findings.filter(f => matchesRepoFilter(f.repo));
+
+  // #10: Search filter
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filtered = filtered.filter(f =>
+      (f.title || '').toLowerCase().includes(q) ||
+      (f.repo || '').toLowerCase().includes(q) ||
+      (f.description || '').toLowerCase().includes(q)
+    );
+  }
 
   const sorted = [...filtered].sort((a, b) => {
     if (sortBy === 'severity') return (severityRank(a.severity) - severityRank(b.severity));
@@ -656,8 +784,13 @@ function renderFindingsView(findings, sortBy) {
     return 0;
   });
 
-  let html = `<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate('/');return false">← Dashboard</a><h1>📋 Findings Timeline</h1><div class="date-info">${filtered.length} findings tracked</div></div></div>`;
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: 'Findings', hash: '/findings'}]);
+  html += `<div class="dash-header"><div><h1>📋 Findings Timeline</h1><div class="date-info">${filtered.length} findings tracked</div></div></div>`;
   html += renderRepoFilter();
+
+  // Search input
+  html += `<div class="search-bar"><input type="text" id="findings-search" class="search-input" placeholder="Search findings by title, repo, or description..." value="${searchQuery || ''}"></div>`;
+
   html += `<div class="sort-bar">Sort: 
     <button class="sort-btn ${sortBy === 'severity' ? 'active' : ''}" onclick="sortFindings('severity')">Severity</button>
     <button class="sort-btn ${sortBy === 'firstSeen' ? 'active' : ''}" onclick="sortFindings('firstSeen')">First Seen</button>
@@ -689,17 +822,30 @@ function renderFindingsView(findings, sortBy) {
   }
 
   app.innerHTML = html;
-  // Store sort state for sort button clicks
-  window._findingsData = findings;
-  window._findingsSort = sortBy;
+
+  // Bind search with debounce
+  let searchTimer;
+  const searchInput = $('findings-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        window._findingsSearch = e.target.value;
+        renderFindingsView(window._findingsData || [], window._findingsSort, e.target.value);
+        // Restore focus
+        const el = $('findings-search');
+        if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
+      }, 200);
+    });
+  }
 }
 
 function sortFindings(by) {
   window._findingsSort = by;
-  renderFindingsView(window._findingsData || [], by);
+  renderFindingsView(window._findingsData || [], by, window._findingsSearch || '');
 }
 
-// Heatmap Calendar
+// #13: Calendar improvements
 async function renderCalendar() {
   showSkeleton('generic');
   let trends;
@@ -718,7 +864,16 @@ async function renderCalendar() {
       }
     }
     const avg = count ? Math.round(total / count) : null;
-    dateScores[date] = { avg, hasCritical, status: hasCritical ? 'critical' : avg == null ? 'none' : avg >= 80 ? 'ok' : avg >= 50 ? 'warning' : 'critical' };
+    let status = 'none';
+    if (avg != null) {
+      if (avg >= 90) status = 'excellent';
+      else if (avg >= 80) status = 'good';
+      else if (avg >= 60) status = 'fair';
+      else if (avg >= 40) status = 'warning';
+      else status = 'critical';
+    }
+    if (hasCritical && status !== 'critical') status = 'critical';
+    dateScores[date] = { avg, hasCritical, status };
   }
 
   // Build 90-day grid
@@ -729,10 +884,11 @@ async function renderCalendar() {
     d.setDate(d.getDate() - i);
     const ds = d.toISOString().slice(0, 10);
     const dow = d.getDay();
-    days.push({ date: ds, dow, info: dateScores[ds] || { avg: null, status: 'none' } });
+    days.push({ date: ds, dow, info: dateScores[ds] || { avg: null, status: 'none' }, month: d.getMonth(), year: d.getFullYear() });
   }
 
-  let html = '<div class="dash-header"><div><a class="back-link" href="#/" onclick="navigate(\'/\');return false">← Dashboard</a><h1>📅 Audit Calendar</h1><div class="date-info">Last 90 days</div></div></div>';
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: 'Calendar', hash: '/calendar'}]);
+  html += '<div class="dash-header"><div><h1>📅 Audit Calendar</h1><div class="date-info">Last 90 days</div></div></div>';
   html += '<div class="calendar-heatmap"><div class="calendar-grid">';
 
   // Group by weeks
@@ -758,6 +914,21 @@ async function renderCalendar() {
   for (let i = 0; i < 7; i++) html += `<div class="cal-label">${dayLabels[i]}</div>`;
   html += '</div>';
 
+  // #13: Month labels
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  html += '<div class="cal-column"><div class="cal-month-row">';
+  let lastMonth = -1;
+  for (const week of weeks) {
+    const firstDay = week.find(d => d != null);
+    if (firstDay && firstDay.month !== lastMonth) {
+      html += `<div class="cal-month-label">${monthNames[firstDay.month]}</div>`;
+      lastMonth = firstDay.month;
+    } else {
+      html += '<div class="cal-month-label"></div>';
+    }
+  }
+  html += '</div>';
+
   html += '<div class="cal-weeks">';
   for (const week of weeks) {
     html += '<div class="cal-week">';
@@ -766,21 +937,23 @@ async function renderCalendar() {
         html += '<div class="cal-day empty"></div>';
       } else {
         const cls = `cal-${day.info.status}`;
-        const title = `${day.date}${day.info.avg != null ? ' — Score: ' + day.info.avg : ' — No data'}`;
+        const scoreText = day.info.avg != null ? `Score: ${day.info.avg}` : 'No data';
         const hasData = day.info.status !== 'none';
-        html += `<div class="cal-day ${cls}" title="${title}" ${hasData ? `onclick="navigate('/report/${day.date}')"` : ''}></div>`;
+        html += `<div class="cal-day ${cls}" data-tooltip="${day.date} — ${scoreText}" ${hasData ? `onclick="navigate('/report/${day.date}')"` : ''}></div>`;
       }
     }
     html += '</div>';
   }
-  html += '</div></div>';
+  html += '</div></div></div>';
 
-  // Legend
+  // Legend with 5 colors
   html += `<div class="cal-legend">
     <span class="cal-legend-item"><span class="cal-day cal-none" style="display:inline-block"></span> No data</span>
-    <span class="cal-legend-item"><span class="cal-day cal-ok" style="display:inline-block"></span> Good</span>
-    <span class="cal-legend-item"><span class="cal-day cal-warning" style="display:inline-block"></span> Warning</span>
-    <span class="cal-legend-item"><span class="cal-day cal-critical" style="display:inline-block"></span> Critical</span>
+    <span class="cal-legend-item"><span class="cal-day cal-excellent" style="display:inline-block"></span> Excellent (90+)</span>
+    <span class="cal-legend-item"><span class="cal-day cal-good" style="display:inline-block"></span> Good (80-89)</span>
+    <span class="cal-legend-item"><span class="cal-day cal-fair" style="display:inline-block"></span> Fair (60-79)</span>
+    <span class="cal-legend-item"><span class="cal-day cal-warning" style="display:inline-block"></span> Warning (40-59)</span>
+    <span class="cal-legend-item"><span class="cal-day cal-critical" style="display:inline-block"></span> Critical (<40)</span>
   </div>`;
 
   html += '</div>';
@@ -790,12 +963,39 @@ async function renderCalendar() {
 // Version display
 async function loadVersion() {
   try {
-    const { version } = await api('/api/version');
+    const { version, buildDate } = await api('/api/version');
     const el = document.getElementById('version-footer');
-    if (el && version) el.textContent = `v${version}`;
+    if (el) {
+      let text = version ? `v${version}` : '';
+      if (buildDate) {
+        const d = new Date(buildDate);
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        text += ` · Built ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+      }
+      el.textContent = text;
+    }
   } catch {}
+}
+
+// #15: Mobile hamburger
+function initMobileNav() {
+  const toggle = $('nav-toggle');
+  const links = $('nav-links');
+  if (toggle && links) {
+    toggle.addEventListener('click', () => {
+      links.classList.toggle('nav-open');
+      toggle.classList.toggle('active');
+    });
+    // Close on nav link click
+    links.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => {
+        links.classList.remove('nav-open');
+        toggle.classList.remove('active');
+      });
+    });
+  }
 }
 
 // Init
 window.addEventListener('hashchange', route);
-window.addEventListener('DOMContentLoaded', () => { route(); loadVersion(); });
+window.addEventListener('DOMContentLoaded', () => { route(); loadVersion(); initMobileNav(); });
