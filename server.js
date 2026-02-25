@@ -8,6 +8,18 @@ const PORT = process.env.PORT || 3000;
 
 const pkg = require('./package.json');
 
+// CORS: Override Cloudflare Access headers to prevent arbitrary origin reflection
+app.use((req, res, next) => {
+  const allowed = ['https://audits.neuhard.dev'];
+  const origin = req.headers.origin;
+  if (allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Helper: get sorted date dirs
