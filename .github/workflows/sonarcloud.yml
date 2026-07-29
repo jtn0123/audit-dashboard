@@ -9,6 +9,9 @@ on:
 jobs:
   sonarcloud:
     name: SonarCloud Scan
+    # Dependabot PRs cannot read repo secrets, so SONAR_TOKEN is empty and the
+    # scan always fails. Skip it rather than report a misleading red check.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
