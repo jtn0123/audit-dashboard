@@ -20,7 +20,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
+      # --ignore-scripts: no dependency here needs a lifecycle script, and CI
+      # holds a SONAR_TOKEN worth protecting from one
+      - run: npm ci --ignore-scripts
       # Sonar reads coverage/lcov.info; without this the quality gate sees 0%
       - run: mkdir -p coverage && npm run test:coverage
       - name: SonarCloud Scan

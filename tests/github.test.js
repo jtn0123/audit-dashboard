@@ -407,6 +407,24 @@ describe('collector end-to-end', () => {
     fs.rmSync(cacheDir, { recursive: true, force: true });
   });
 
+  it('ignores query params that name inherited Object properties', async () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
+    const collector = new Collector(config, { fetchImpl: fakeGitHub().fetchImpl, now: () => NOW });
+    await collector.refresh();
+
+    const all = collector.getRepos({ filter: 'all' });
+    // `filters.constructor` on a plain object would be Object — truthy for every
+    // repo — and `sorters.toString` would be used as a comparator.
+    for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      const filtered = collector.getRepos({ filter: key });
+      assert.equal(filtered.length, all.length, `filter=${key} should be ignored, not applied`);
+      const sorted = collector.getRepos({ sort: key });
+      assert.deepEqual(sorted.map(r => r.fullName), all.map(r => r.fullName), `sort=${key} should fall back to risk`);
+    }
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
   it('shares one in-flight refresh between concurrent callers', async () => {
     let userCalls = 0;
     const { fetchImpl: inner } = fakeGitHub();

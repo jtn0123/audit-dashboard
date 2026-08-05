@@ -233,7 +233,10 @@ function sortRepos(repos) {
     scan: (a, b) => (b.lastScan.ageDays ?? 1e9) - (a.lastScan.ageDays ?? 1e9),
     name: (a, b) => a.fullName.localeCompare(b.fullName)
   };
-  return [...repos].sort(by[repoSort] || by.risk);
+  // hasOwn guard: repoSort is restored from sessionStorage, and by['constructor']
+  // would otherwise hand sort() an inherited function as the comparator.
+  const comparator = Object.hasOwn(by, repoSort) ? by[repoSort] : by.risk;
+  return [...repos].sort((a, b) => comparator(a, b));
 }
 
 function renderRepoTable() {
