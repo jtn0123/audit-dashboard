@@ -13,7 +13,7 @@ module.exports = [
     },
   },
   {
-    files: ['server.js', 'eslint.config.js', 'tests/**/*.js'],
+    files: ['server.js', 'eslint.config.js', 'lib/**/*.js', 'tests/**/*.js'],
     languageOptions: {
       globals: globals.node,
     },
@@ -25,6 +25,17 @@ module.exports = [
         ...globals.browser,
         Chart: 'readonly',
         marked: 'readonly',
+        // Shared between app.js and repos.js (classic scripts, one global scope)
+        $: 'readonly',
+        app: 'readonly',
+        api: 'readonly',
+        navigate: 'readonly',
+        showError: 'readonly',
+        severityBadge: 'readonly',
+        renderSeverityBar: 'readonly',
+        renderPatch: 'readonly',
+        renderPrs: 'readonly',
+        renderCoverage: 'readonly',
       },
     },
     rules: {

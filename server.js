@@ -2,20 +2,30 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
+const { loadConfig } = require('./lib/config');
+const { Collector } = require('./lib/collector');
+
 const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const PORT = process.env.PORT || 3000;
 
 const pkg = require('./package.json');
 
-// CORS: Override Cloudflare Access headers to prevent arbitrary origin reflection
+const ghConfig = loadConfig();
+const collector = new Collector(ghConfig);
+
+// CORS: Override Cloudflare Access headers to prevent arbitrary origin reflection.
+// ALLOWED_ORIGINS lets a self-hosted instance add its own LAN hostnames.
+const ALLOWED_ORIGINS = [
+  'https://audits.neuhard.dev',
+  ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+];
 app.use((req, res, next) => {
-  const allowed = ['https://audits.neuhard.dev'];
   const origin = req.headers.origin;
-  if (allowed.includes(origin)) {
+  if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
   res.setHeader('Access-Control-Max-Age', '86400');
   next();
 });
@@ -252,7 +262,12 @@ app.get('/health', (req, res) => {
     lastRunDuration: metaInfo.lastRunDuration,
     healthScore,
     agentCount: agentReports.length,
-    findingCounts: getFindingCounts(reports)
+    findingCounts: getFindingCounts(reports),
+    github: {
+      configured: ghConfig.enabled,
+      fetchedAt: collector.state.fetchedAt,
+      repoCount: collector.state.repos.length
+    }
   });
 });
 
@@ -441,5 +456,64 @@ app.get('/api/report/:date/:agent/md', (req, res) => {
   res.type('text/plain').send(fs.readFileSync(fp, 'utf8'));
 });
 
+// === GitHub / Dependabot endpoints =======================================
+//
+// These read from the background collector's cache, so the UI never waits on
+// the GitHub API. `/api/gh/status` always answers, even unconfigured, so the
+// frontend can render a setup screen instead of an error.
+
+function requireGitHub(req, res, next) {
+  if (!ghConfig.enabled) {
+    return res.status(503).json({
+      error: 'GitHub integration not configured',
+      hint: 'Set GITHUB_TOKEN (a PAT with repo + security_events scope) and restart.'
+    });
+  }
+  next();
+}
+
+app.get('/api/gh/status', (req, res) => res.json(collector.getStatus()));
+
+app.get('/api/gh/overview', requireGitHub, (req, res) => {
+  res.json({
+    status: collector.getStatus(),
+    summary: collector.state.summary,
+    gaps: collector.getCoverageGaps()
+  });
+});
+
+app.get('/api/gh/repos', requireGitHub, (req, res) => {
+  const { filter, search, sort } = req.query;
+  res.json(collector.getRepos({ filter, search, sort }));
+});
+
+app.get('/api/gh/prs', requireGitHub, (req, res) => {
+  res.json(collector.getPullRequests({ kind: req.query.kind || 'all' }));
+});
+
+app.get('/api/gh/alerts', requireGitHub, (req, res) => {
+  res.json(collector.getAlerts({ severity: req.query.severity, repo: req.query.repo }));
+});
+
+app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getCoverageGaps()));
+
+app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
+  try {
+    await collector.refresh();
+    res.json({ ok: true, status: collector.getStatus() });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+if (ghConfig.enabled) {
+  console.log(`GitHub integration enabled — refreshing every ${ghConfig.refreshMinutes}m` +
+    (ghConfig.owners.length ? ` for ${ghConfig.owners.join(', ')}` : ' for all accessible repos'));
+  collector.start();
+} else {
+  console.log('GitHub integration disabled — set GITHUB_TOKEN to enable the Patch view');
+}
+
 app.listen(PORT, () => console.log(`Audit dashboard on port ${PORT}`));

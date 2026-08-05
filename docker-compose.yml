@@ -1,13 +1,22 @@
-version: "3.8"
 services:
   audit-dashboard:
     build: .
     container_name: audit-dashboard
     ports:
       - "3002:3002"
+    env_file:
+      - .env
     volumes:
+      # Nightly audit reports (optional — only the Audits/Trends views use these)
       - /home/clawdbot/clawd/audits:/data
+      # Warm cache: repo data + ETags survive restarts, so a restart costs
+      # almost nothing against the GitHub rate limit
+      - gh-cache:/cache
     environment:
       - DATA_DIR=/data
       - PORT=3002
+      - GH_CACHE_FILE=/cache/github.json
     restart: unless-stopped
+
+volumes:
+  gh-cache:
