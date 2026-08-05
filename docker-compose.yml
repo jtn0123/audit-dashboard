@@ -3,19 +3,22 @@ services:
     build: .
     container_name: audit-dashboard
     ports:
-      - "3002:3002"
+      - "${PORT:-3002}:${PORT:-3002}"
     env_file:
       - .env
     volumes:
-      # Nightly audit reports (optional — only the Audits/Trends views use these)
-      - /home/clawdbot/clawd/audits:/data
+      # Nightly audit reports (optional — only the Audits/Trends views use these).
+      # Override the host path with AUDIT_DATA_DIR in .env.
+      - ${AUDIT_DATA_DIR:-/home/clawdbot/clawd/audits}:/data
       # Warm cache: repo data + ETags survive restarts, so a restart costs
       # almost nothing against the GitHub rate limit
       - gh-cache:/cache
     environment:
+      # `environment` wins over `env_file`, so these interpolate from .env
+      # rather than overriding it. Container-side paths, not host paths.
       - DATA_DIR=/data
-      - PORT=3002
-      - GH_CACHE_FILE=/cache/github.json
+      - PORT=${PORT:-3002}
+      - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
     restart: unless-stopped
 
 volumes:

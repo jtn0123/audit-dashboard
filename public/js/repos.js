@@ -75,7 +75,12 @@ async function loadGitHub(force = false) {
 async function refreshGitHub(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
   try {
-    await fetch('/api/gh/refresh', { method: 'POST' });
+    // fetch() resolves for 5xx, so check explicitly before dropping cached state.
+    const response = await fetch('/api/gh/refresh', { method: 'POST' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Refresh failed (${response.status})`);
+    }
     ghState.repos = [];
     await renderPatch();
   } catch (e) {
@@ -284,7 +289,9 @@ function renderRepoRow(r) {
   const scanTone = r.lastScan.at ? ageTone(r.lastScan.ageDays, ghState.status.staleDays) : 'red';
   const prCounts = r.prs.counts;
   return `<div class="repo-row-wrap">
-    <div class="repo-row ${open ? 'expanded' : ''}" onclick="toggleRepo('${esc(r.fullName)}')">
+    <div class="repo-row ${open ? 'expanded' : ''}" role="button" tabindex="0"
+      aria-expanded="${open}" aria-label="${esc(r.fullName)} details" data-repo="${esc(r.fullName)}"
+      onclick="toggleRepo('${esc(r.fullName)}')" onkeydown="repoRowKey(event, '${esc(r.fullName)}')">
       <span class="repo-name">
         <span class="expand-icon">${open ? '▾' : '▸'}</span>
         <span class="repo-title">${esc(r.name)}</span>
@@ -313,6 +320,18 @@ function toggleRepo(fullName) {
   if (expandedRepos.has(fullName)) expandedRepos.delete(fullName);
   else expandedRepos.add(fullName);
   renderRepoTable();
+  // Re-rendering drops focus; put it back on the row that was just toggled.
+  // Matched on the dataset rather than a selector so repo names need no escaping.
+  for (const row of document.querySelectorAll('.repo-row')) {
+    if (row.dataset.repo === fullName) { row.focus(); break; }
+  }
+}
+
+/** Rows are grid containers rather than buttons, so Enter/Space are wired by hand. */
+function repoRowKey(event, fullName) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  toggleRepo(fullName);
 }
 
 function renderRepoDetail(r) {

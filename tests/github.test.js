@@ -287,13 +287,16 @@ updates:
 // === collector end-to-end (fake GitHub) ==================================
 
 function fakeGitHub() {
+  // Assertions inside fetchImpl would be swallowed by the collector's own
+  // try/catch, so observations are recorded here and asserted in the test body.
+  const seen = { dependabotRunEvents: [] };
   const repos = [
     { name: 'covered', full_name: 'me/covered', owner: { login: 'me' }, html_url: 'https://github.com/me/covered', default_branch: 'main', language: 'JavaScript', pushed_at: ago(1), private: false, security_and_analysis: { dependabot_security_updates: { status: 'enabled' }, secret_scanning: { status: 'enabled' } } },
     { name: 'naked', full_name: 'me/naked', owner: { login: 'me' }, html_url: 'https://github.com/me/naked', default_branch: 'main', language: 'Python', pushed_at: ago(200), private: true, security_and_analysis: { dependabot_security_updates: { status: 'disabled' } } },
     { name: 'fork', full_name: 'me/fork', owner: { login: 'me' }, fork: true, html_url: 'https://github.com/me/fork', security_and_analysis: {} }
   ];
 
-  return async function fetchImpl(url) {
+  const fetchImpl = async function (url) {
     const { pathname, searchParams } = new URL(url);
     const json = (body, headers) => fakeResponse({ body, headers });
 
@@ -330,7 +333,7 @@ function fakeGitHub() {
         ]);
       }
       if (rest.startsWith('/actions/runs')) {
-        assert.equal(searchParams.get('event'), 'dynamic');
+        seen.dependabotRunEvents.push(searchParams.get('event'));
         return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
       }
       if (rest.startsWith('/code-scanning/analyses')) return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
@@ -340,13 +343,17 @@ function fakeGitHub() {
     }
     return fakeResponse({ status: 404, body: { message: 'Not Found' } });
   };
+  return { fetchImpl, seen };
 }
 
 describe('collector end-to-end', () => {
   it('builds a full patch board from GitHub responses', async () => {
-    const cacheFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-')), 'cache.json');
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
+    const cacheFile = path.join(cacheDir, 'cache.json');
     const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: cacheFile, GH_AUTO_REFRESH: 'false' });
-    const collector = new Collector(config, { fetchImpl: fakeGitHub() });
+    const { fetchImpl, seen } = fakeGitHub();
+    // Fixed clock so ages, stale-scan gaps and risk stay deterministic forever.
+    const collector = new Collector(config, { fetchImpl, now: () => NOW });
 
     const state = await collector.refresh();
 
@@ -387,17 +394,24 @@ describe('collector end-to-end', () => {
     assert.equal(collector.getAlerts({ severity: 'high' }).length, 1);
     assert.equal(collector.getCoverageGaps()[0].fullName, 'me/naked');
 
+    // "Last scan" reads Dependabot's own update jobs, not just any workflow run
+    assert.ok(seen.dependabotRunEvents.length > 0);
+    assert.ok(seen.dependabotRunEvents.every(e => e === 'dynamic'));
+
     // Cache survives a restart
     assert.ok(fs.existsSync(cacheFile));
-    const reloaded = new Collector(config, { fetchImpl: fakeGitHub() });
+    const reloaded = new Collector(config, { fetchImpl: fakeGitHub().fetchImpl });
     assert.equal(reloaded.state.repos.length, 2);
     assert.equal(reloaded.getStatus().repoCount, 2);
+
+    fs.rmSync(cacheDir, { recursive: true, force: true });
   });
 
   it('shares one in-flight refresh between concurrent callers', async () => {
     let userCalls = 0;
-    const inner = fakeGitHub();
-    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(os.tmpdir(), `ghtest-${process.pid}.json`), GH_AUTO_REFRESH: 'false' });
+    const { fetchImpl: inner } = fakeGitHub();
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
     const collector = new Collector(config, {
       fetchImpl: async (url, opts) => {
         if (new URL(url).pathname === '/user') userCalls++;
@@ -406,5 +420,29 @@ describe('collector end-to-end', () => {
     });
     await Promise.all([collector.refresh(), collector.refresh(), collector.refresh()]);
     assert.equal(userCalls, 1);
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  it('keeps healthy repos when one repo blows up mid-collection', async () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
+    const { fetchImpl: inner } = fakeGitHub();
+    const collector = new Collector(config, {
+      now: () => NOW,
+      fetchImpl: async (url, opts) => {
+        // A malformed listing entry: no full_name, so posture building throws.
+        if (new URL(url).pathname === '/user/repos') {
+          const res = await inner(url, opts);
+          const repos = await res.json();
+          return fakeResponse({ body: [...repos, { name: 'broken' }] });
+        }
+        return inner(url, opts);
+      }
+    });
+
+    const state = await collector.refresh();
+    assert.equal(state.repos.length, 2, 'the two good repos still land');
+    assert.ok(state.fetchedAt, 'state was still committed');
+    fs.rmSync(cacheDir, { recursive: true, force: true });
   });
 });

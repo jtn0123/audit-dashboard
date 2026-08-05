@@ -45,7 +45,10 @@ A **fine-grained PAT**, read-only, with these repository permissions:
 | Actions: Read | "Last Dependabot run" timestamp |
 | Administration: Read | Whether alerts / security updates are enabled |
 
-A classic PAT with `repo` + `security_events` works too. Nothing is ever written back to GitHub.
+A classic PAT with `repo` + `security_events` also works, but prefer the fine-grained one:
+the classic `repo` scope grants full **read/write** access to all your repositories, far more
+than this dashboard needs. The dashboard itself only ever issues read requests — it never
+writes to GitHub — but a leaked classic token would.
 
 ## Configuration
 
@@ -67,6 +70,7 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_CACHE_FILE` | `.cache/github.json` | Warm cache + ETag store |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
 | `DATA_DIR` | `..` | Nightly audit reports (`YYYY-MM-DD/` dirs) for the Audits views |
+| `AUDIT_DATA_DIR` | — | Host path compose mounts at `/data` (compose only) |
 | `PORT` | `3002` | Server port |
 | `ALLOWED_ORIGINS` | — | Extra CORS origins for your LAN hostnames |
 
@@ -86,7 +90,7 @@ never actually run, whatever the settings page says.
 
 Risk drives the default sort, so the top of the table is where to start:
 
-```
+```text
 40 × critical alerts + 18 × high + 5 × medium + 1 × low
 + 35  Dependabot alerts disabled      (nothing is scanning this repo)
 + 18  no dependabot.yml               (no version-update PRs)
@@ -125,7 +129,7 @@ a status page, or a cron job that pokes you on Slack.
 
 ## Architecture
 
-```
+```text
 ├── server.js              # Express: audit-file API + /api/gh/* read models
 ├── lib/
 │   ├── config.js          # Env parsing, repo include/exclude globs
@@ -149,7 +153,8 @@ without touching the network.
 ```bash
 npm install
 GITHUB_TOKEN=ghp_xxx npm start        # http://localhost:3002
-npm test                              # 45 tests, no network required
+npm test                              # 53 tests, no network required
+npm run test:coverage                 # writes coverage/lcov.info
 npm run lint
 ```
 

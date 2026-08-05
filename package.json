@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout tests/*.js",
     "lint": "eslint ."
   },
   "dependencies": {
