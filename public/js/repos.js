@@ -225,17 +225,20 @@ function setRepoSort(key) {
 }
 function setRepoSearch(value) { repoSearch = value; renderRepoTable(); }
 
+// Selected by switch, not by indexing: repoSort is restored from sessionStorage,
+// and a keyed lookup on it is a dynamic dispatch on stored input.
+function repoComparator(sort) {
+  switch (sort) {
+    case 'alerts': return (a, b) => b.alerts.counts.total - a.alerts.counts.total || b.risk - a.risk;
+    case 'prs': return (a, b) => b.prs.counts.total - a.prs.counts.total || b.risk - a.risk;
+    case 'scan': return (a, b) => (b.lastScan.ageDays ?? 1e9) - (a.lastScan.ageDays ?? 1e9);
+    case 'name': return (a, b) => a.fullName.localeCompare(b.fullName);
+    default: return (a, b) => b.risk - a.risk || a.fullName.localeCompare(b.fullName);
+  }
+}
+
 function sortRepos(repos) {
-  const by = {
-    risk: (a, b) => b.risk - a.risk || a.fullName.localeCompare(b.fullName),
-    alerts: (a, b) => b.alerts.counts.total - a.alerts.counts.total || b.risk - a.risk,
-    prs: (a, b) => b.prs.counts.total - a.prs.counts.total || b.risk - a.risk,
-    scan: (a, b) => (b.lastScan.ageDays ?? 1e9) - (a.lastScan.ageDays ?? 1e9),
-    name: (a, b) => a.fullName.localeCompare(b.fullName)
-  };
-  // hasOwn guard: repoSort is restored from sessionStorage, and by['constructor']
-  // would otherwise hand sort() an inherited function as the comparator.
-  const comparator = Object.hasOwn(by, repoSort) ? by[repoSort] : by.risk;
+  const comparator = repoComparator(repoSort);
   return [...repos].sort((a, b) => comparator(a, b));
 }
 
