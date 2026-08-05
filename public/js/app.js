@@ -19,7 +19,13 @@ const AGENTS = {
 const AGENT_ORDER = ['security', 'quality', 'infra', 'dependencies', 'lighthouse', 'consistency', 'roadmap'];
 
 function navigate(path) { window.location.hash = path; }
-function getRoute() { return window.location.hash.slice(1) || '/'; }
+// Query strings after the hash carry view state (filters, search); the router
+// only cares about the path portion.
+function getRoute() {
+  const hash = window.location.hash.slice(1) || '/';
+  const q = hash.indexOf('?');
+  return q === -1 ? hash : hash.slice(0, q);
+}
 async function api(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`API error: ${r.status} ${r.statusText}`);
@@ -212,6 +218,18 @@ async function route() {
   } else if (path === '/coverage') {
     $('nav-coverage')?.classList.add('active');
     await renderCoverage();
+    return;
+  } else if (path === '/advisories') {
+    $('nav-advisories')?.classList.add('active');
+    await renderAdvisories();
+    return;
+  } else if (path === '/packages') {
+    $('nav-packages')?.classList.add('active');
+    await renderPackages();
+    return;
+  } else if (path === '/timeline') {
+    $('nav-timeline')?.classList.add('active');
+    await renderTimeline();
     return;
   }
 

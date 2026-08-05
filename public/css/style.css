@@ -672,3 +672,144 @@ body.embed .container { max-width: none; padding: 8px; }
   .pr-repo { min-width: 0; }
   .pr-author { display: none; }
 }
+
+/* ============================================================
+   Advisories, packages, timeline, merge controls, shortcuts
+   ============================================================ */
+
+/* Repo table gains a trend column */
+.repo-head, .repo-row {
+  grid-template-columns:
+    minmax(190px, 2fr) minmax(140px, 1.4fr) minmax(110px, 1fr)
+    minmax(70px, 0.6fr) minmax(85px, 0.8fr) 72px minmax(120px, 1.1fr);
+}
+.repo-trend { display: flex; align-items: center; }
+.sparkline { display: block; overflow: visible; }
+
+/* "Since your last visit" */
+.changes-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 16px; font-size: 0.85rem;
+}
+.changes-label { color: var(--text-dim); }
+.changes-movers { color: var(--text-muted); font-size: 0.78rem; }
+.changes-banner .bullet { color: var(--text-muted); }
+.changes-dismiss {
+  margin-left: auto; background: none; border: none; color: var(--text-muted);
+  font-size: 1.1rem; cursor: pointer; line-height: 1; padding: 0 4px;
+}
+.changes-dismiss:hover { color: var(--text); }
+
+/* Merge controls */
+.merge-bar { display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; }
+.merge-go:not([disabled]) { border-color: rgba(63, 185, 80, 0.4); color: var(--green); }
+.merge-go[disabled] { opacity: 0.45; cursor: not-allowed; }
+.pr-row { display: flex; align-items: center; gap: 8px; }
+.pr-row .pr-item { flex: 1; }
+.pr-check { accent-color: var(--green); cursor: pointer; flex: none; }
+.merge-errors {
+  background: rgba(248, 81, 73, 0.12); border: 1px solid rgba(248, 81, 73, 0.35);
+  color: var(--red); border-radius: var(--radius); padding: 10px 14px;
+  margin-bottom: 12px; font-size: 0.82rem;
+}
+
+/* Alerts past their age budget */
+.alert-item.alert-breach { border-left: 2px solid var(--red); }
+.alert-item.dismissed { opacity: 0.65; }
+.dismissed-block summary {
+  cursor: pointer; color: var(--text-dim); font-size: 0.78rem;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px;
+}
+
+/* Advisories */
+.advisory-list { display: flex; flex-direction: column; gap: 10px; }
+.advisory {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+}
+.advisory-multi { border-left-color: var(--orange); }
+.advisory-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.advisory-pkg {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent); font-size: 0.85rem;
+}
+.advisory-summary { flex: 1; min-width: 200px; font-size: 0.88rem; }
+.advisory-count {
+  background: var(--bg-hover); border-radius: 10px; padding: 2px 9px;
+  font-size: 0.75rem; color: var(--text-dim); white-space: nowrap;
+}
+.advisory-meta {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  margin-top: 8px; font-size: 0.76rem;
+}
+.advisory-meta a { color: var(--accent); text-decoration: none; }
+.advisory-repos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.advisory-repo {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 9px; font-size: 0.78rem; color: var(--text); text-decoration: none;
+}
+.advisory-repo:hover { background: var(--bg-hover); }
+.advisory-repo.stale { border-color: rgba(248, 81, 73, 0.4); }
+
+/* Packages */
+.search-input.wide { width: 100%; margin-bottom: 16px; }
+.pkg-list { display: flex; flex-direction: column; gap: 8px; }
+.pkg { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.pkg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pkg-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem; color: var(--text);
+}
+.pkg-count { color: var(--text-dim); font-size: 0.78rem; margin-left: auto; }
+.pkg-repos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pkg-repo {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 9px; font-size: 0.78rem; color: var(--text); text-decoration: none;
+  display: inline-flex; gap: 6px;
+}
+.pkg-repo:hover { background: var(--bg-hover); }
+.pkg-version { color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Timeline */
+.chart-wrap { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.big-chart { width: 100%; height: auto; display: block; }
+.chart-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  margin-top: 10px; font-size: 0.75rem; color: var(--text-dim);
+}
+.chart-legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.timeline-rows { display: flex; flex-direction: column; gap: 2px; }
+.timeline-row {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 6px 10px; background: var(--bg-surface); border-radius: 6px; font-size: 0.78rem;
+}
+
+/* Keyboard shortcut help */
+.shortcut-help {
+  position: fixed; right: 20px; bottom: 20px; z-index: 200;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; min-width: 260px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.shortcut-help h4 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin-bottom: 10px; }
+.shortcut-help div { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; font-size: 0.82rem; }
+.shortcut-help kbd {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem; min-width: 72px; text-align: center;
+}
+.shortcut-help .refresh-btn { margin-top: 8px; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .repo-head, .repo-row { grid-template-columns: 1fr 1fr; }
+  .repo-trend { display: none; }
+  .advisory-summary { min-width: 0; }
+  .shortcut-help { display: none; }
+}
