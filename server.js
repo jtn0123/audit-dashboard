@@ -4,6 +4,7 @@ const path = require('path');
 
 const { loadConfig } = require('./lib/config');
 const { Collector } = require('./lib/collector');
+const { createWebhookHandler } = require('./lib/webhook');
 
 const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -472,7 +473,12 @@ function requireGitHub(req, res, next) {
   next();
 }
 
-app.get('/api/gh/status', (req, res) => res.json(collector.getStatus()));
+app.get('/api/gh/status', (req, res) => res.json({
+  ...collector.getStatus(),
+  allowWrites: ghConfig.allowWrites,
+  webhookConfigured: Boolean(ghConfig.webhookSecret),
+  sla: ghConfig.sla
+}));
 
 app.get('/api/gh/overview', requireGitHub, (req, res) => {
   res.json({
@@ -497,6 +503,26 @@ app.get('/api/gh/alerts', requireGitHub, (req, res) => {
 
 app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getCoverageGaps()));
 
+// One row per advisory instead of one per repo — "this CVE hits 4 repos".
+app.get('/api/gh/advisories', requireGitHub, (req, res) => {
+  res.json(collector.getAdvisories({ severity: req.query.severity, minRepos: req.query.minRepos }));
+});
+
+// "A CVE just dropped — who uses this package?" Answers from the SBOM, so it
+// covers dependencies that have no advisory at all.
+app.get('/api/gh/packages', requireGitHub, (req, res) => {
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  res.json(collector.searchPackages(req.query.q, { limit }));
+});
+
+app.get('/api/gh/history', requireGitHub, (req, res) => res.json(collector.getHistory()));
+
+app.get('/api/gh/changes', requireGitHub, (req, res) => {
+  const since = req.query.since;
+  if (!since) return res.status(400).json({ error: 'since (ISO timestamp) is required' });
+  res.json(collector.getChangesSince(since) || { changes: null });
+});
+
 app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
   try {
     await collector.refresh();
@@ -505,6 +531,20 @@ app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
     res.status(502).json({ ok: false, error: e.message });
   }
 });
+
+// The only write path in the app, and it is off unless GH_ALLOW_WRITES is set.
+app.post('/api/gh/merge', requireGitHub, express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const result = await collector.mergePullRequest(req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(e.status || 502).json({ ok: false, error: e.message });
+  }
+});
+
+// Raw body: the HMAC is computed over the exact bytes GitHub sent, so this
+// route must not be handed to a JSON parser first.
+app.post('/api/gh/webhook', express.raw({ type: '*/*', limit: '5mb' }), createWebhookHandler(collector, ghConfig));
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

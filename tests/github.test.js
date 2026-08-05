@@ -333,8 +333,22 @@ function fakeGitHub() {
         ]);
       }
       if (rest.startsWith('/actions/runs')) {
-        seen.dependabotRunEvents.push(searchParams.get('event'));
-        return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
+        // Two callers hit this path: the Dependabot-run lookup (event=dynamic)
+        // and the default-branch CI check (branch=...). Only record the former.
+        const event = searchParams.get('event');
+        if (event) {
+          seen.dependabotRunEvents.push(event);
+          return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
+        }
+        return json({
+          workflow_runs: [{
+            status: 'completed',
+            conclusion: full === 'me/naked' ? 'failure' : 'success',
+            name: 'ci',
+            html_url: `https://github.com/${full}/actions/runs/1`,
+            updated_at: ago(1)
+          }]
+        });
       }
       if (rest.startsWith('/code-scanning/analyses')) return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
       if (rest.includes('/check-runs')) {
