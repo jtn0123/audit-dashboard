@@ -208,6 +208,30 @@ describe('GitHub API tests (configured)', () => {
     assert.ok(types.indexOf('enable_alerts') < types.indexOf('merge_pr'));
   });
 
+  it('GET /api/openapi.json describes every /api/gh endpoint', async () => {
+    const r = await request(port, '/api/openapi.json');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.openapi, '3.1.0');
+    for (const p of ['/api/gh/status', '/api/gh/actions', '/api/gh/repos', '/api/gh/prs', '/api/gh/alerts', '/api/gh/coverage', '/api/gh/refresh', '/api/digest.md', '/healthz']) {
+      assert.ok(r.json.paths[p], `spec missing ${p}`);
+    }
+  });
+
+  it('GET /api/digest.md renders the populated briefing as markdown', async () => {
+    const r = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/api/digest.md`, res => {
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+      }).on('error', reject);
+    });
+    assert.equal(r.status, 200);
+    assert.match(r.type, /text\/markdown/);
+    assert.match(r.body, /# Patch Board digest/);
+    assert.match(r.body, /safe to merge/);
+    assert.match(r.body, /me\/covered/);
+  });
+
   it('GET /health includes GitHub integration state', async () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
