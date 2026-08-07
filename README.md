@@ -135,6 +135,18 @@ limit. Remaining quota is shown in the header.
 Everything the UI reads is a plain JSON endpoint, so it's easy to wire into Home Assistant,
 a status page, or a cron job that pokes you on Slack.
 
+## Agent access (MCP)
+
+`mcp/server.js` is a dependency-free MCP server (stdio transport) that exposes the
+dashboard to AI agents as native tools: `get_status`, `refresh_and_wait`, `list_actions`,
+`get_merge_plan`, `get_repo_posture`, `list_alerts`, `get_coverage_gaps`. The repo's
+`.mcp.json` registers it for Claude Code automatically — sessions opened in this project
+can pull the work queue and execute it with their own credentials.
+
+The server holds no tokens and can take no action against GitHub: it only reads this
+dashboard's API. Point it elsewhere with `PATCHBOARD_URL` (default `http://127.0.0.1:3002`).
+For other MCP clients, run `node mcp/server.js` with stdio transport.
+
 ## Architecture
 
 ```text
