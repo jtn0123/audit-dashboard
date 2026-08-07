@@ -342,6 +342,25 @@ describe('webhook', () => {
     assert.equal(dropped.action, 'drop');
     assert.equal(dropped.repo, 'me/app');
   });
+
+  it('refuses to act on a repository name that is not owner/repo', () => {
+    // The name becomes a request path and a log line, so a payload that smuggles
+    // a traversal, a query string or a newline must not get that far.
+    const bad = [
+      'me/app/../../admin', '../etc/passwd', 'me/app?x=1', 'me/app\nINFO fake log line',
+      'me app', 'noslash', 'me/', '/app', '', 42, { full_name: 'me/app' },
+      `me/${'a'.repeat(200)}`
+    ];
+    for (const full_name of bad) {
+      const plan = planForEvent('dependabot_alert', { repository: { full_name }, action: 'created' });
+      assert.equal(plan.action, 'ignore', `should ignore ${JSON.stringify(full_name)}`);
+      assert.equal(plan.repo, undefined);
+    }
+    // The shapes GitHub actually sends still pass.
+    for (const full_name of ['me/app', 'my-org/my.repo', 'a/b', 'me/audit-dashboard']) {
+      assert.equal(planForEvent('dependabot_alert', { repository: { full_name } }).repo, full_name);
+    }
+  });
 });
 
 // === merge guardrails ====================================================

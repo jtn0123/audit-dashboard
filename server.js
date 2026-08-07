@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 
@@ -532,8 +533,35 @@ app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
   }
 });
 
+/**
+ * Rate limits for the two routes that make an authorization decision.
+ *
+ * The webhook is the one endpoint meant to be reachable from outside the LAN,
+ * and it verifies an HMAC over a body of up to 5 MB before it can reject
+ * anything — so an unauthenticated caller can burn CPU at will without one.
+ * The ceiling is set well above what GitHub actually delivers: a busy account
+ * pushes a handful of events a minute, not hundreds.
+ */
+const webhookLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many webhook deliveries, slow down' }
+});
+
+// Merging is a write against GitHub and spends rate-limit quota, so it gets a
+// tighter budget than a read. Clearing a backlog by hand stays comfortable.
+const mergeLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many merge requests, slow down' }
+});
+
 // The only write path in the app, and it is off unless GH_ALLOW_WRITES is set.
-app.post('/api/gh/merge', requireGitHub, express.json({ limit: '8kb' }), async (req, res) => {
+app.post('/api/gh/merge', mergeLimiter, requireGitHub, express.json({ limit: '8kb' }), async (req, res) => {
   try {
     const result = await collector.mergePullRequest(req.body || {});
     res.json({ ok: true, ...result });
@@ -544,7 +572,8 @@ app.post('/api/gh/merge', requireGitHub, express.json({ limit: '8kb' }), async (
 
 // Raw body: the HMAC is computed over the exact bytes GitHub sent, so this
 // route must not be handed to a JSON parser first.
-app.post('/api/gh/webhook', express.raw({ type: '*/*', limit: '5mb' }), createWebhookHandler(collector, ghConfig));
+app.post('/api/gh/webhook', webhookLimiter, express.raw({ type: '*/*', limit: '5mb' }),
+  createWebhookHandler(collector, ghConfig));
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

@@ -161,8 +161,14 @@ is reachable from GitHub — a tunnel, a port forward — point a webhook at it 
 A delivery re-collects only the repo it names, so an alert costs a handful of API calls
 rather than a full rescan. Requests without a valid `x-hub-signature-256` are rejected with
 401 — the signature is checked in constant time before the body is parsed — and the endpoint
-returns 503 while `GH_WEBHOOK_SECRET` is unset. Keep the polling interval as a safety net;
-webhooks and polling are complementary, not exclusive.
+returns 503 while `GH_WEBHOOK_SECRET` is unset. A payload whose repository name isn't shaped
+like `owner/repo` is ignored rather than sanitized downstream, since that name would
+otherwise become a request path. Both the webhook (120/min) and the merge endpoint (30/min)
+are rate-limited: this is the one route meant to face the internet, and it has to run an
+HMAC before it can reject anything.
+
+Keep the polling interval as a safety net; webhooks and polling are complementary, not
+exclusive.
 
 ## Rate limits
 
@@ -216,6 +222,10 @@ a status page, or a cron job that pokes you on Slack.
 │   └── css/style.css
 └── tests/                 # node --test; the collector is tested against a fake GitHub
 ```
+
+Two runtime dependencies: `express`, and `express-rate-limit` for the two routes that make
+an authorization decision. Everything else — the GitHub client, the charts, the sparklines —
+is written against the standard library and the DOM, with no build step.
 
 The collector polls on a timer and writes to a disk cache; the HTTP API only ever reads that
 cache, so the UI never blocks on GitHub and a rate-limit hiccup shows stale data rather than

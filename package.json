@@ -9,7 +9,8 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "express": "^4.22.2"
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.6.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

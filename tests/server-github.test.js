@@ -314,4 +314,19 @@ describe('GitHub API tests (configured)', () => {
     });
     assert.equal(ignored.json.action, 'ignore');
   });
+
+  // Last on purpose: this test deliberately exhausts the merge budget, and the
+  // window outlives the request that trips it.
+  it('rate-limits the merge endpoint', async () => {
+    const fire = () => request(port, '/api/gh/merge', 'POST', { body: { repo: 'me/covered', number: 7 } });
+
+    let limited = null;
+    for (let i = 0; i < 40 && !limited; i++) {
+      const r = await fire();
+      if (r.status === 429) limited = r;
+    }
+
+    assert.ok(limited, 'expected the limiter to reject a burst of merge requests');
+    assert.match(limited.json.error, /slow down/i);
+  });
 });
