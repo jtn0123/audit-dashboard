@@ -26,6 +26,18 @@ function getRoute() {
   const q = hash.indexOf('?');
   return q === -1 ? hash : hash.slice(0, q);
 }
+
+// Route segments come from the URL hash, so they are user input in the XSS
+// sense even on a dashboard only you can reach: a crafted link is all it takes.
+// A report is always addressed by a date and an agent id, and anything that
+// isn't one of those is not a route we can serve anyway.
+function safeDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null;
+}
+
+function safeAgent(value) {
+  return /^[\w-]{1,64}$/.test(value || '') ? value : null;
+}
 async function api(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`API error: ${r.status} ${r.statusText}`);
@@ -249,10 +261,14 @@ async function route() {
     $('nav-calendar')?.classList.add('active');
     await renderCalendar();
   } else if (path.startsWith('/diff')) {
-    await renderDiff(path.split('/')[2]);
+    await renderDiff(safeDate(path.split('/')[2]));
   } else if (path.startsWith('/report/')) {
     const parts = path.split('/').filter(Boolean);
-    await renderReport(parts[1], parts[2]);
+    // The hash is attacker-supplied — anyone can send a link. Both values are
+    // interpolated into markup and into API paths downstream, so they are
+    // constrained to the shapes they can legitimately take before going
+    // anywhere, rather than escaped at each of the places they end up.
+    await renderReport(safeDate(parts[1]), safeAgent(parts[2]));
   } else {
     await renderDashboard();
   }
@@ -505,6 +521,10 @@ function bindFindingToggles() {
 
 // Report Detail
 async function renderReport(date, agent) {
+  if (!date) {
+    app.innerHTML = '<div class="empty"><div class="icon">🔍</div><h3>Report not found</h3><p>That link does not name a report date.</p></div>';
+    return;
+  }
   showSkeleton('generic');
 
   if (!agent) {
