@@ -10,6 +10,9 @@ node_modules/
 # Local cache
 .cache/
 
+# Local audit-report mount point used by docker-compose
+audits/
+
 # Build output
 dist/
 

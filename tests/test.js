@@ -71,6 +71,12 @@ describe('API tests', () => {
     assert.equal(r.json.status, 'ok');
   });
 
+  it('GET /healthz returns 200 liveness probe', async () => {
+    const r = await getJSON(port, '/healthz');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, { status: 'ok' });
+  });
+
   it('GET /api/dates returns array of date strings', async () => {
     const r = await getJSON(port, '/api/dates');
     assert.equal(r.status, 200);

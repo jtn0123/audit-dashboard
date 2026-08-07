@@ -1,25 +1,67 @@
 services:
   audit-dashboard:
-    build: .
+    build:
+      context: .
+    # Local build pinned to the package version — never :latest
+    image: audit-dashboard:2.1.0
     container_name: audit-dashboard
     ports:
-      - "${PORT:-3002}:${PORT:-3002}"
-    env_file:
-      - .env
+      # 127.0.0.1 by default. To reach it from other LAN devices, set
+      # HOST_BIND to this box's LAN address (e.g. 192.168.1.x).
+      # Never bind 0.0.0.0 on a WAN-facing interface.
+      - "${HOST_BIND:-127.0.0.1}:${PORT:-3002}:${PORT:-3002}"
     volumes:
       # Nightly audit reports (optional — only the Audits/Trends views use these).
-      # Override the host path with AUDIT_DATA_DIR in .env.
-      - ${AUDIT_DATA_DIR:-/home/clawdbot/clawd/audits}:/data
+      # Defaults to an empty named volume; point AUDIT_DATA_DIR at a host path
+      # (e.g. ./audits) to feed it real reports.
+      - ${AUDIT_DATA_DIR:-audit-data}:/data:ro
       # Warm cache: repo data + ETags survive restarts, so a restart costs
       # almost nothing against the GitHub rate limit
       - gh-cache:/cache
     environment:
-      # `environment` wins over `env_file`, so these interpolate from .env
-      # rather than overriding it. Container-side paths, not host paths.
+      # Values interpolate from the shell env, a local .env file, or stack env
+      # vars (Portainer). No env_file: .env is gitignored, so a git-sourced
+      # deploy would fail on a missing file. Empty values fall back to the
+      # app's own defaults (lib/config.js).
       - DATA_DIR=/data
       - PORT=${PORT:-3002}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GH_OWNERS=${GH_OWNERS:-}
+      - GH_REPOS_INCLUDE=${GH_REPOS_INCLUDE:-}
+      - GH_REPOS_EXCLUDE=${GH_REPOS_EXCLUDE:-}
+      - GH_INCLUDE_ARCHIVED=${GH_INCLUDE_ARCHIVED:-}
+      - GH_INCLUDE_FORKS=${GH_INCLUDE_FORKS:-}
+      - GH_INCLUDE_PRIVATE=${GH_INCLUDE_PRIVATE:-}
+      - GH_REFRESH_MINUTES=${GH_REFRESH_MINUTES:-}
+      - GH_STALE_DAYS=${GH_STALE_DAYS:-}
+      - GH_CONCURRENCY=${GH_CONCURRENCY:-}
+      - GH_MAX_REPOS=${GH_MAX_REPOS:-}
+      - GH_AUTO_REFRESH=${GH_AUTO_REFRESH:-}
       - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
+      - GITHUB_API_URL=${GITHUB_API_URL:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${PORT:-3002}/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    mem_limit: 256m
+    pids_limit: 128
 
 volumes:
   gh-cache:
+  audit-data:
