@@ -77,6 +77,19 @@ describe('API tests', () => {
     assert.deepEqual(r.json, { status: 'ok' });
   });
 
+  it('GET /api/digest.md degrades honestly when unconfigured', async () => {
+    const r = await get(port, '/api/digest.md');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /not configured/);
+  });
+
+  it('GET /llms.txt serves the agent contract', async () => {
+    const r = await get(port, '/llms.txt');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /work queue/i);
+    assert.match(r.body, /refresh-then-read/);
+  });
+
   it('GET /api/dates returns array of date strings', async () => {
     const r = await getJSON(port, '/api/dates');
     assert.equal(r.status, 200);

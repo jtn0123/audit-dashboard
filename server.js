@@ -4,6 +4,8 @@ const path = require('path');
 
 const { loadConfig } = require('./lib/config');
 const { Collector } = require('./lib/collector');
+const { buildDigest } = require('./lib/digest');
+const { spec: openapiSpec } = require('./lib/openapi');
 
 const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -505,6 +507,19 @@ app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getC
 // staleness contract so callers refresh-then-read (POST /api/gh/refresh
 // blocks until the cache is fresh).
 app.get('/api/gh/actions', requireGitHub, (req, res) => res.json(collector.getActions()));
+
+// Self-description: the machine-readable spec and the markdown briefing.
+// Both answer even unconfigured — the digest says so instead of erroring.
+app.get('/api/openapi.json', (req, res) => res.json(openapiSpec));
+
+app.get('/api/digest.md', (req, res) => {
+  const md = buildDigest({
+    status: collector.getStatus(),
+    summary: collector.state.summary,
+    actions: ghConfig.enabled ? collector.getActions() : null
+  });
+  res.type('text/markdown').send(md);
+});
 
 app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
   try {

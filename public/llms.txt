@@ -1,0 +1,53 @@
+# Patch Board
+
+Self-hosted, read-only dashboard answering "where do I need to patch things?"
+across every GitHub repo its token can see: Dependabot alerts, update PRs with
+CI verdicts, coverage gaps, scan freshness, risk scores — plus a prioritized,
+machine-readable work queue for agents.
+
+## Security model (read before acting)
+
+- This service is a SENSOR and PLANNER only. It holds a read-only GitHub token
+  and never writes to GitHub. There are no write endpoints.
+- Actions in the queue carry literal `gh` CLI commands. YOU (the agent) execute
+  them with YOUR OWN credentials, subject to your own operator's approval.
+- Data comes from a background cache. Check the `stale` flag; when true, POST
+  /api/gh/refresh first (it blocks until fresh), then re-read: refresh-then-read.
+- CI verdicts are as of the last refresh. Re-verify with `gh pr checks` before
+  merging anything.
+
+## API (all JSON, no auth, LAN-only deployment)
+
+- GET /api/gh/status — token state, last scan, rate limit, freshness. Always answers.
+- GET /api/gh/actions — THE WORK QUEUE. One entry per executable step:
+  {type, repo, pr?, verdict, why, command, preconditions?}. Types: merge_pr,
+  close_superseded, enable_alerts, enable_security_updates,
+  add_dependabot_config, flag_pr. Sorted executable-first, then by risk.
+- GET /api/gh/repos?filter=&search=&sort= — full per-repo posture: alerts by
+  severity, Dependabot config state, PRs with CI rollups + verdict inputs,
+  last-scan evidence, gaps, risk (0–100, weights documented in the README).
+- GET /api/gh/prs?kind=dependabot|other|all — every open PR across repos.
+- GET /api/gh/alerts?severity=&repo= — open vulnerability alerts.
+- GET /api/gh/coverage — repos with scanning gaps and what to fix.
+- POST /api/gh/refresh — force a rescan; responds when the cache is fresh.
+- GET /api/digest.md — this data as a markdown morning briefing.
+- GET /api/openapi.json — machine-readable spec of everything above.
+- GET /healthz — liveness. GET /health — health + version + integration state.
+- /api/dates, /api/summary, /api/report/:date[/:agent[/md]], /api/findings,
+  /api/diff/:d1/:d2?, /api/trends — nightly multi-agent audit reports
+  (separate subsystem; empty unless audit data is mounted).
+
+## MCP
+
+mcp/server.js in the repo is a dependency-free stdio MCP server wrapping this
+API (tools: get_status, refresh_and_wait, list_actions, get_merge_plan,
+get_repo_posture, list_alerts, get_coverage_gaps). Point it here with
+PATCHBOARD_URL. The repo's .mcp.json registers it for Claude Code.
+
+## Verdicts
+
+safe_to_merge = bot author + green CI + patch/minor bump. breaking_major =
+major bump (never auto-merge). superseded = a sibling PR bumps the same
+package to an equal-or-newer version (close, don't merge). needs_human =
+human-authored, workflow-touching, or unparseable. red_ci / no_ci / ci_pending
+/ draft = not actionable. Full logic: lib/verdicts.js.
