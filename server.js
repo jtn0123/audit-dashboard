@@ -1,9 +1,11 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 
 const { loadConfig } = require('./lib/config');
 const { Collector } = require('./lib/collector');
+const { createWebhookHandler } = require('./lib/webhook');
 
 const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -472,7 +474,12 @@ function requireGitHub(req, res, next) {
   next();
 }
 
-app.get('/api/gh/status', (req, res) => res.json(collector.getStatus()));
+app.get('/api/gh/status', (req, res) => res.json({
+  ...collector.getStatus(),
+  allowWrites: ghConfig.allowWrites,
+  webhookConfigured: Boolean(ghConfig.webhookSecret),
+  sla: ghConfig.sla
+}));
 
 app.get('/api/gh/overview', requireGitHub, (req, res) => {
   res.json({
@@ -497,6 +504,26 @@ app.get('/api/gh/alerts', requireGitHub, (req, res) => {
 
 app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getCoverageGaps()));
 
+// One row per advisory instead of one per repo — "this CVE hits 4 repos".
+app.get('/api/gh/advisories', requireGitHub, (req, res) => {
+  res.json(collector.getAdvisories({ severity: req.query.severity, minRepos: req.query.minRepos }));
+});
+
+// "A CVE just dropped — who uses this package?" Answers from the SBOM, so it
+// covers dependencies that have no advisory at all.
+app.get('/api/gh/packages', requireGitHub, (req, res) => {
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  res.json(collector.searchPackages(req.query.q, { limit }));
+});
+
+app.get('/api/gh/history', requireGitHub, (req, res) => res.json(collector.getHistory()));
+
+app.get('/api/gh/changes', requireGitHub, (req, res) => {
+  const since = req.query.since;
+  if (!since) return res.status(400).json({ error: 'since (ISO timestamp) is required' });
+  res.json(collector.getChangesSince(since) || { changes: null });
+});
+
 app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
   try {
     await collector.refresh();
@@ -505,6 +532,48 @@ app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
     res.status(502).json({ ok: false, error: e.message });
   }
 });
+
+/**
+ * Rate limits for the two routes that make an authorization decision.
+ *
+ * The webhook is the one endpoint meant to be reachable from outside the LAN,
+ * and it verifies an HMAC over a body of up to 5 MB before it can reject
+ * anything — so an unauthenticated caller can burn CPU at will without one.
+ * The ceiling is set well above what GitHub actually delivers: a busy account
+ * pushes a handful of events a minute, not hundreds.
+ */
+const webhookLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many webhook deliveries, slow down' }
+});
+
+// Merging is a write against GitHub and spends rate-limit quota, so it gets a
+// tighter budget than a read. Clearing a backlog by hand stays comfortable.
+const mergeLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many merge requests, slow down' }
+});
+
+// The only write path in the app, and it is off unless GH_ALLOW_WRITES is set.
+app.post('/api/gh/merge', mergeLimiter, requireGitHub, express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const result = await collector.mergePullRequest(req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(e.status || 502).json({ ok: false, error: e.message });
+  }
+});
+
+// Raw body: the HMAC is computed over the exact bytes GitHub sent, so this
+// route must not be handed to a JSON parser first.
+app.post('/api/gh/webhook', webhookLimiter, express.raw({ type: '*/*', limit: '5mb' }),
+  createWebhookHandler(collector, ghConfig));
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

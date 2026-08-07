@@ -7,8 +7,15 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 
+const crypto = require('node:crypto');
+
 const DAY = 86_400_000;
 const ago = d => new Date(Date.now() - d * DAY).toISOString();
+// Generated per run rather than written down: the test only needs the server
+// and the signing helper to agree, and a literal here is indistinguishable
+// from a checked-in credential to a secret scanner.
+const WEBHOOK_SECRET = crypto.randomBytes(16).toString('hex');
+const sign = body => `sha256=${crypto.createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')}`;
 
 const REPOS = [
   {
@@ -65,20 +72,42 @@ function fakeGitHubServer() {
       }
       if (rest.startsWith('/actions/runs')) return send({ workflow_runs: [{ created_at: ago(1) }] });
       if (rest.startsWith('/code-scanning/analyses')) return send({ message: 'no analysis found' }, 404);
+      if (rest.startsWith('/code-scanning/alerts')) return send([]);
+      if (rest.startsWith('/secret-scanning/alerts')) return send([]);
+      if (rest.startsWith('/dependency-graph/sbom')) {
+        return send({
+          sbom: {
+            packages: [
+              { name: `com.github.${full}`, versionInfo: '1' },
+              { name: 'npm:thing', versionInfo: '2.0.0' },
+              { name: 'npm:shared', versionInfo: '1.0.0' }
+            ]
+          }
+        });
+      }
       if (rest.includes('/check-runs')) return send({ check_runs: [{ status: 'completed', conclusion: 'success' }] });
     }
     send({ message: 'Not Found' }, 404);
   });
 }
 
-function request(port, urlPath, method = 'GET') {
+function request(port, urlPath, method = 'GET', { body, headers } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, { method }, (res) => {
-      let body = '';
-      res.on('data', c => body += c);
-      res.on('end', () => resolve({ status: res.statusCode, json: body ? JSON.parse(body) : null }));
+    const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
+    const options = {
+      method,
+      headers: {
+        ...(payload == null ? {} : { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }),
+        ...headers
+      }
+    };
+    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, options, (res) => {
+      let text = '';
+      res.on('data', c => text += c);
+      res.on('end', () => resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null }));
     });
     req.on('error', reject);
+    if (payload != null) req.write(payload);
     req.end();
   });
 }
@@ -93,7 +122,9 @@ before(async () => {
   process.env.GITHUB_TOKEN = 'test-token';
   process.env.GITHUB_API_URL = `http://127.0.0.1:${gh.address().port}`;
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
+  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.jsonl');
   process.env.GH_AUTO_REFRESH = 'false';
+  process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
   process.env.DATA_DIR = path.join(__dirname, 'fixtures');
   process.env.PORT = '0';
 
@@ -190,5 +221,112 @@ describe('GitHub API tests (configured)', () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
     assert.equal(r.json.github.repoCount, 2);
+  });
+
+  it('GET /api/gh/advisories pivots alerts to one row per advisory', async () => {
+    const r = await request(port, '/api/gh/advisories');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.length, 1);
+    assert.equal(r.json[0].ghsaId, 'GHSA-x');
+    assert.equal(r.json[0].repoCount, 1);
+    assert.deepEqual(r.json[0].repos.map(x => x.repo), ['me/covered']);
+
+    assert.equal((await request(port, '/api/gh/advisories?severity=low')).json.length, 0);
+    assert.equal((await request(port, '/api/gh/advisories?minRepos=2')).json.length, 0);
+  });
+
+  it('GET /api/gh/packages searches the dependency graph across repos', async () => {
+    const r = await request(port, '/api/gh/packages?q=shared');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.indexed, true);
+    assert.equal(r.json.results.length, 1);
+    // Both repos report the package, so both should be listed.
+    assert.deepEqual(r.json.results[0].repos.map(x => x.repo).sort(), ['me/covered', 'me/naked']);
+    // The SPDX entry describing the repo itself is not a dependency.
+    assert.equal(r.json.results.some(p => p.name.startsWith('com.github.')), false);
+
+    const empty = await request(port, '/api/gh/packages');
+    assert.deepEqual(empty.json.results, []);
+    assert.ok(empty.json.count >= 2);
+  });
+
+  it('GET /api/gh/history returns a snapshot per scan', async () => {
+    const r = await request(port, '/api/gh/history');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.length >= 1);
+    const latest = r.json[r.json.length - 1];
+    assert.equal(latest.repos, 2);
+    assert.equal(latest.critical, 1);
+    assert.equal(latest.byRepo['me/covered'], 1);
+  });
+
+  it('GET /api/gh/changes needs a timestamp and reports nothing on a single scan', async () => {
+    const missing = await request(port, '/api/gh/changes');
+    assert.equal(missing.status, 400);
+
+    const r = await request(port, `/api/gh/changes?since=${encodeURIComponent(ago(1))}`);
+    assert.equal(r.status, 200);
+    // One scan means no baseline to compare against yet.
+    assert.equal(r.json.changes, null);
+  });
+
+  it('POST /api/gh/merge refuses to write unless writes are enabled', async () => {
+    const r = await request(port, '/api/gh/merge', 'POST', { body: { repo: 'me/covered', number: 7 } });
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /GH_ALLOW_WRITES/);
+
+    // Still open — nothing was merged.
+    const prs = await request(port, '/api/gh/prs?kind=dependabot');
+    assert.deepEqual(prs.json.map(pr => pr.number), [7]);
+  });
+
+  it('POST /api/gh/webhook rejects anything it cannot verify', async () => {
+    const body = JSON.stringify({ repository: { full_name: 'me/covered' }, action: 'created' });
+    const unsigned = await request(port, '/api/gh/webhook', 'POST', {
+      body, headers: { 'x-github-event': 'dependabot_alert' }
+    });
+    assert.equal(unsigned.status, 401);
+
+    const wrong = await request(port, '/api/gh/webhook', 'POST', {
+      body, headers: { 'x-github-event': 'dependabot_alert', 'x-hub-signature-256': sign('something else') }
+    });
+    assert.equal(wrong.status, 401);
+  });
+
+  it('POST /api/gh/webhook re-collects the repo a signed event names', async () => {
+    const body = JSON.stringify({ repository: { full_name: 'me/covered' }, action: 'created' });
+    const r = await request(port, '/api/gh/webhook', 'POST', {
+      body, headers: { 'x-github-event': 'dependabot_alert', 'x-hub-signature-256': sign(body) }
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.action, 'recollect');
+    assert.equal(r.json.repo, 'me/covered');
+
+    const ping = JSON.stringify({ zen: 'Keep it logically awesome.' });
+    const pinged = await request(port, '/api/gh/webhook', 'POST', {
+      body: ping, headers: { 'x-github-event': 'ping', 'x-hub-signature-256': sign(ping) }
+    });
+    assert.equal(pinged.json.action, 'ack');
+
+    const starred = JSON.stringify({ repository: { full_name: 'me/covered' } });
+    const ignored = await request(port, '/api/gh/webhook', 'POST', {
+      body: starred, headers: { 'x-github-event': 'star', 'x-hub-signature-256': sign(starred) }
+    });
+    assert.equal(ignored.json.action, 'ignore');
+  });
+
+  // Last on purpose: this test deliberately exhausts the merge budget, and the
+  // window outlives the request that trips it.
+  it('rate-limits the merge endpoint', async () => {
+    const fire = () => request(port, '/api/gh/merge', 'POST', { body: { repo: 'me/covered', number: 7 } });
+
+    let limited = null;
+    for (let i = 0; i < 40 && !limited; i++) {
+      const r = await fire();
+      if (r.status === 429) limited = r;
+    }
+
+    assert.ok(limited, 'expected the limiter to reject a burst of merge requests');
+    assert.match(limited.json.error, /slow down/i);
   });
 });

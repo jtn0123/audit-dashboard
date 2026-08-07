@@ -19,6 +19,9 @@ services:
       - DATA_DIR=/data
       - PORT=${PORT:-3002}
       - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
+      # Snapshot history lives on the same volume, so the Timeline view keeps
+      # its record across restarts and image rebuilds.
+      - GH_HISTORY_FILE=${GH_HISTORY_FILE:-/cache/history.jsonl}
     restart: unless-stopped
 
 volumes:
