@@ -13,7 +13,7 @@ module.exports = [
     },
   },
   {
-    files: ['server.js', 'eslint.config.js', 'lib/**/*.js', 'tests/**/*.js'],
+    files: ['server.js', 'eslint.config.js', 'lib/**/*.js', 'tests/**/*.js', 'mcp/**/*.js'],
     languageOptions: {
       globals: globals.node,
     },
