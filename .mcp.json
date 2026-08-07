@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "patch-board": {
+      "command": "node",
+      "args": ["mcp/server.js"],
+      "env": {
+        "PATCHBOARD_URL": "http://10.27.27.99:3002"
+      }
+    }
+  }
+}
