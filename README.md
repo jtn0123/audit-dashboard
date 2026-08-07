@@ -32,6 +32,11 @@ docker compose up -d
 
 Open `http://localhost:3002`. The first scan runs at startup and takes a few seconds per repo.
 
+The container is hardened by default: digest-pinned base image, non-root user, read-only
+root filesystem (tmpfs `/tmp`, named volume for the cache), all capabilities dropped,
+`no-new-privileges`, a `/healthz` healthcheck, a 256 MB memory cap, and log rotation
+(json-file, 10 MB × 3). The port binds to `127.0.0.1` unless you set `HOST_BIND`.
+
 ### The token
 
 A **fine-grained PAT**, read-only, with these repository permissions:
@@ -70,8 +75,9 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_CACHE_FILE` | `.cache/github.json` | Warm cache + ETag store |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
 | `DATA_DIR` | `..` | Nightly audit reports (`YYYY-MM-DD/` dirs) for the Audits views |
-| `AUDIT_DATA_DIR` | — | Host path compose mounts at `/data` (compose only) |
+| `AUDIT_DATA_DIR` | `./audits` | Host path compose mounts read-only at `/data` (compose only) |
 | `PORT` | `3002` | Server port |
+| `HOST_BIND` | `127.0.0.1` | Host interface compose binds the port to (compose only). Set to the box's LAN IP for LAN access; never a WAN-facing interface. |
 | `ALLOWED_ORIGINS` | — | Extra CORS origins for your LAN hostnames |
 
 ## How "last scan" is determined
@@ -121,6 +127,7 @@ limit. Remaining quota is shown in the header.
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
 | `POST` | `/api/gh/refresh` | Force a rescan now |
+| `GET` | `/healthz` | Liveness probe (no I/O — wired into the compose healthcheck) |
 | `GET` | `/health` | Health + version + GitHub integration state |
 | `GET` | `/api/dates`, `/api/summary`, `/api/report/:date[/:agent[/md]]`, `/api/findings`, `/api/diff/:d1/:d2?`, `/api/trends` | Nightly audit data |
 

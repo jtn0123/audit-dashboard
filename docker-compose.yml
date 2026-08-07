@@ -1,15 +1,21 @@
 services:
   audit-dashboard:
-    build: .
+    build:
+      context: .
+    # Local build pinned to the package version — never :latest
+    image: audit-dashboard:2.1.0
     container_name: audit-dashboard
     ports:
-      - "${PORT:-3002}:${PORT:-3002}"
+      # 127.0.0.1 by default. To reach it from other LAN devices, set
+      # HOST_BIND in .env to this box's LAN address (e.g. 192.168.1.x).
+      # Never bind 0.0.0.0 on a WAN-facing interface.
+      - "${HOST_BIND:-127.0.0.1}:${PORT:-3002}:${PORT:-3002}"
     env_file:
       - .env
     volumes:
       # Nightly audit reports (optional — only the Audits/Trends views use these).
       # Override the host path with AUDIT_DATA_DIR in .env.
-      - ${AUDIT_DATA_DIR:-/home/clawdbot/clawd/audits}:/data
+      - ${AUDIT_DATA_DIR:-./audits}:/data:ro
       # Warm cache: repo data + ETags survive restarts, so a restart costs
       # almost nothing against the GitHub rate limit
       - gh-cache:/cache
@@ -20,6 +26,26 @@ services:
       - PORT=${PORT:-3002}
       - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${PORT:-3002}/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    mem_limit: 256m
+    pids_limit: 128
 
 volumes:
   gh-cache:

@@ -245,6 +245,10 @@ function normalize(name, data) {
 
 // === API Endpoints ===
 
+// Liveness probe for container healthchecks: no filesystem or GitHub work,
+// answers as long as the event loop is alive. /health below is the rich one.
+app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
+
 // #4: Enriched health
 app.get('/health', (req, res) => {
   const dates = getDates();
