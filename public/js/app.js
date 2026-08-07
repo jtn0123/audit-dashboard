@@ -27,10 +27,22 @@ function getRoute() {
   return q === -1 ? hash : hash.slice(0, q);
 }
 
+/**
+ * HTML-escape a value before it is interpolated into markup.
+ *
+ * Every view here builds strings and assigns them to innerHTML, so anything
+ * that did not originate in this file gets escaped on the way in.
+ */
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
+}
+
 // Route segments come from the URL hash, so they are user input in the XSS
 // sense even on a dashboard only you can reach: a crafted link is all it takes.
 // A report is always addressed by a date and an agent id, and anything that
-// isn't one of those is not a route we can serve anyway.
+// isn't one of those is not a route we can serve anyway. Validating here and
+// escaping at each sink are both cheap, and neither alone is worth relying on.
 function safeDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null;
 }
@@ -51,7 +63,7 @@ function showError(message, detail) {
 function renderCardError(agent, error) {
   const a = AGENTS[agent] || { icon: '📄', label: agent };
   return `<div class="card card-critical" style="cursor:default">
-    <div class="card-header"><span class="agent-label">${a.icon} ${a.label}</span><span class="status-dot red"></span></div>
+    <div class="card-header"><span class="agent-label">${a.icon} ${escapeHtml(a.label)}</span><span class="status-dot red"></span></div>
     <div class="card-body"><span class="card-grade" style="color:var(--red)">ERR</span></div>
     <div class="card-summary" style="color:var(--red)">Failed to load</div>
   </div>`;
@@ -178,7 +190,7 @@ function renderHealthHero(score, date, delta) {
         <div class="health-gauge-sub">Overall Health</div>
       </div>
     </div>
-    <div style="color:var(--text-dim);font-size:.82rem;margin-top:6px">${date}</div>
+    <div style="color:var(--text-dim);font-size:.82rem;margin-top:6px">${escapeHtml(date)}</div>
     ${deltaHtml}
   </div>`;
 }
@@ -373,7 +385,7 @@ async function renderDashboard() {
 
     html += `<div class="card card-${sc}" onclick="navigate('/report/${today}/${agent}')">
       <div class="card-header">
-        <span class="agent-label">${a.icon} ${a.label}</span>
+        <span class="agent-label">${a.icon} ${escapeHtml(a.label)}</span>
         <span class="status-dot ${statusDotClass(r.status)}"></span>
       </div>
       <div class="card-body">
@@ -382,7 +394,7 @@ async function renderDashboard() {
       </div>
       <div class="card-summary">${r.summary || ''}</div>
       ${r.score != null ? `<div class="score-bar"><div class="score-bar-fill" data-score="${r.score}" style="background:${scoreColor(r.score)}"></div></div>` : ''}
-      <canvas class="sparkline-canvas" data-agent="${agent}" width="120" height="32"></canvas>
+      <canvas class="sparkline-canvas" data-agent="${escapeHtml(agent)}" width="120" height="32"></canvas>
     </div>`;
   }
   html += '</div>';
@@ -529,16 +541,16 @@ async function renderReport(date, agent) {
 
   if (!agent) {
     let reports;
-    try { reports = await api(`/api/report/${date}`); } catch (e) { showError('Failed to load reports', e.message); return; }
-    let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: date, hash: `/report/${date}`}]);
-    html += `<div class="dash-header"><div><h1>Reports for ${date}</h1></div></div>`;
+    try { reports = await api(`/api/report/${encodeURIComponent(date)}`); } catch (e) { showError('Failed to load reports', e.message); return; }
+    let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: escapeHtml(date), hash: `/report/${encodeURIComponent(date)}`}]);
+    html += `<div class="dash-header"><div><h1>Reports for ${escapeHtml(date)}</h1></div></div>`;
     html += '<div class="cards">';
     for (const r of reports) {
       if (r.agent === 'meta') continue;
       const a = AGENTS[r.agent] || { icon: '📄', label: r.agent };
       const sc = statusClass(r.status);
-      html += `<div class="card card-${sc}" onclick="navigate('/report/${date}/${r.agent}')">
-        <div class="card-header"><span class="agent-label">${a.icon} ${a.label}</span><span class="status-dot ${statusDotClass(r.status)}"></span></div>
+      html += `<div class="card card-${sc}" onclick="navigate('/report/${encodeURIComponent(date)}/${encodeURIComponent(r.agent)}')">
+        <div class="card-header"><span class="agent-label">${a.icon} ${escapeHtml(a.label)}</span><span class="status-dot ${statusDotClass(r.status)}"></span></div>
         <div class="card-body"><span class="card-grade" style="color:${scoreColor(r.score||0)}">${r.grade || (r.score != null ? r.score : '—')}</span></div>
       </div>`;
     }
@@ -552,20 +564,20 @@ async function renderReport(date, agent) {
   // #7: Per-agent trend chart - fetch trend data
   let trendHtml = '';
   try {
-    const trends = await api(`/api/trends?agent=${agent}&days=14`);
+    const trends = await api(`/api/trends?agent=${encodeURIComponent(agent)}&days=14`);
     const agentData = trends.data[agent];
     if (agentData && agentData.length >= 2) {
-      trendHtml = `<div class="chart-box" style="margin-bottom:24px;max-height:200px"><h3>${a.label} Score Trend (Last 14 Days)</h3><canvas id="agentTrendChart" style="max-height:140px"></canvas></div>`;
+      trendHtml = `<div class="chart-box" style="margin-bottom:24px;max-height:200px"><h3>${escapeHtml(a.label)} Score Trend (Last 14 Days)</h3><canvas id="agentTrendChart" style="max-height:140px"></canvas></div>`;
     }
   } catch {}
 
   // Try markdown first
   try {
-    const mdRes = await fetch(`/api/report/${date}/${agent}/md`);
+    const mdRes = await fetch(`/api/report/${encodeURIComponent(date)}/${encodeURIComponent(agent)}/md`);
     if (mdRes.ok) {
       const md = await mdRes.text();
-      let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: a.label, hash: `/report/${date}`}, {label: date, hash: `/report/${date}/${agent}`}]);
-      html += `<div class="dash-header"><div><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date}</div></div></div>`;
+      let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: escapeHtml(a.label), hash: `/report/${encodeURIComponent(date)}`}, {label: escapeHtml(date), hash: `/report/${encodeURIComponent(date)}/${encodeURIComponent(agent)}`}]);
+      html += `<div class="dash-header"><div><h1>${a.icon} ${escapeHtml(a.label)} Report</h1><div class="date-info">${escapeHtml(date)}</div></div></div>`;
       html += trendHtml;
       html += `<div class="markdown-body">${marked.parse(md)}</div>`;
       app.innerHTML = html;
@@ -576,10 +588,10 @@ async function renderReport(date, agent) {
 
   // Fallback JSON
   let report;
-  try { report = await api(`/api/report/${date}/${agent}`); } catch (e) { showError('Failed to load report', e.message); return; }
+  try { report = await api(`/api/report/${encodeURIComponent(date)}/${encodeURIComponent(agent)}`); } catch (e) { showError('Failed to load report', e.message); return; }
   if (report.error) { app.innerHTML = '<div class="empty"><div class="icon">🔍</div><h3>Report not found</h3></div>'; return; }
-  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: a.label, hash: `/report/${date}`}, {label: date, hash: `/report/${date}/${agent}`}]);
-  html += `<div class="dash-header"><div><h1>${a.icon} ${a.label} Report</h1><div class="date-info">${date} · Score: ${report.score ?? '—'}</div></div></div>`;
+  let html = renderBreadcrumbs([{label: 'Dashboard', hash: '/'}, {label: escapeHtml(a.label), hash: `/report/${encodeURIComponent(date)}`}, {label: escapeHtml(date), hash: `/report/${encodeURIComponent(date)}/${encodeURIComponent(agent)}`}]);
+  html += `<div class="dash-header"><div><h1>${a.icon} ${escapeHtml(a.label)} Report</h1><div class="date-info">${escapeHtml(date)} · Score: ${report.score ?? '—'}</div></div></div>`;
   html += trendHtml;
   html += `<div class="markdown-body"><pre><code>${JSON.stringify(report.raw, null, 2)}</code></pre></div>`;
   app.innerHTML = html;
@@ -591,7 +603,7 @@ async function renderAgentTrendChart(agent) {
   const canvas = $('agentTrendChart');
   if (!canvas) return;
   try {
-    const trends = await api(`/api/trends?agent=${agent}&days=14`);
+    const trends = await api(`/api/trends?agent=${encodeURIComponent(agent)}&days=14`);
     const agentData = trends.data[agent];
     if (!agentData || agentData.length < 2) return;
 
@@ -700,7 +712,7 @@ async function renderHistory() {
 
   for (const date of dates) {
     let reports;
-    try { reports = await api(`/api/report/${date}`); } catch { continue; }
+    try { reports = await api(`/api/report/${encodeURIComponent(date)}`); } catch { continue; }
     const meta = reports.find(r => r.agent === 'meta');
     const agentReports = reports.filter(r => r.agent !== 'meta' && r.agent !== 'digest');
     const dur = meta?.raw?.durationSeconds;
@@ -710,8 +722,8 @@ async function renderHistory() {
       return w;
     }, 'ok');
 
-    html += `<div class="history-row ${worst}" onclick="navigate('/report/${date}')">
-      <span class="history-date">${date}</span>
+    html += `<div class="history-row ${worst}" onclick="navigate('/report/${encodeURIComponent(date)}')">
+      <span class="history-date">${escapeHtml(date)}</span>
       <div class="history-agents">
         ${agentReports.map(r => `<span class="agent-chip ${statusClass(r.status)}">${(AGENTS[r.agent]?.icon || '')} ${r.score ?? '—'}</span>`).join('')}
       </div>
@@ -753,7 +765,7 @@ function matchesRepoFilter(text) {
 async function renderDiff(date) {
   showSkeleton('generic');
   let diff;
-  const url = date ? `/api/diff/${date}` : null;
+  const url = date ? `/api/diff/${encodeURIComponent(date)}` : null;
   if (!url) {
     // Get latest date
     try {
@@ -778,7 +790,7 @@ async function renderDiff(date) {
     const cls = delta > 0 ? 'improved' : delta < 0 ? 'regressed' : 'unchanged';
     const a = AGENTS[sc.agent] || { icon: '📄', label: sc.agent };
     html += `<div class="diff-card ${cls}">
-      <div class="diff-agent">${a.icon} ${a.label}</div>
+      <div class="diff-agent">${a.icon} ${escapeHtml(a.label)}</div>
       <div class="diff-scores">${sc.before ?? '—'} → ${sc.after ?? '—'}</div>
       <div class="diff-delta ${cls}">${arrow} ${delta != null ? Math.abs(delta) : '—'}</div>
     </div>`;
