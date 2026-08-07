@@ -186,6 +186,28 @@ describe('GitHub API tests (configured)', () => {
     assert.ok(r.json.every(g => g.gaps.length > 0));
   });
 
+  it('GET /api/gh/actions returns the work queue with the staleness contract', async () => {
+    const r = await request(port, '/api/gh/actions');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.dataAsOf, 'dataAsOf present');
+    assert.equal(r.json.stale, false, 'fresh right after collection');
+    assert.equal(typeof r.json.staleAfterMinutes, 'number');
+
+    const types = r.json.actions.map(a => a.type);
+    // me/covered's green patch bump #7 is mergeable; me/naked's disabled
+    // alerts and missing config become executable gap actions.
+    assert.ok(types.includes('merge_pr'));
+    assert.ok(types.includes('enable_alerts'));
+    assert.ok(types.includes('add_dependabot_config'));
+
+    const merge = r.json.actions.find(a => a.type === 'merge_pr');
+    assert.equal(merge.pr, 7);
+    assert.equal(merge.verdict, 'safe_to_merge');
+    assert.match(merge.command, /gh pr merge 7 --repo me\/covered --squash/);
+    // Executable queue order: enable_alerts before merge_pr before config gaps.
+    assert.ok(types.indexOf('enable_alerts') < types.indexOf('merge_pr'));
+  });
+
   it('GET /health includes GitHub integration state', async () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
