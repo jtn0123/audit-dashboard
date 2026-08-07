@@ -199,7 +199,23 @@ async function route() {
   const path = getRoute();
   document.querySelectorAll('nav a[id]').forEach(a => a.classList.remove('active'));
 
-  if (path === '/') {
+  // GitHub-backed views read a server-side cache that only refreshes every
+  // GH_REFRESH_MINUTES, so they opt out of the 60s auto-refresh loop.
+  if (path === '/' || path === '/patch') {
+    $('nav-patch')?.classList.add('active');
+    await renderPatch();
+    return;
+  } else if (path === '/prs') {
+    $('nav-prs')?.classList.add('active');
+    await renderPrs();
+    return;
+  } else if (path === '/coverage') {
+    $('nav-coverage')?.classList.add('active');
+    await renderCoverage();
+    return;
+  }
+
+  if (path === '/audits') {
     $('nav-dash')?.classList.add('active');
     await renderDashboard();
   } else if (path === '/trends') {

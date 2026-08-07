@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Audit Dashboard</title>
+  <title>Patch Board</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
@@ -11,12 +11,16 @@
 </head>
 <body>
   <nav>
-    <div class="logo" onclick="navigate('/')">⬡ Audits <span>dashboard</span></div>
+    <div class="logo" onclick="navigate('/')">⬡ Patch <span>board</span></div>
     <button class="nav-toggle" id="nav-toggle" aria-label="Menu">
       <span></span><span></span><span></span>
     </button>
     <div class="nav-links" id="nav-links">
-      <a href="#/" onclick="navigate('/');return false" id="nav-dash">Dashboard</a>
+      <a href="#/" onclick="navigate('/');return false" id="nav-patch">Patch board</a>
+      <a href="#/prs" onclick="navigate('/prs');return false" id="nav-prs">Pull requests</a>
+      <a href="#/coverage" onclick="navigate('/coverage');return false" id="nav-coverage">Coverage</a>
+      <span class="nav-divider"></span>
+      <a href="#/audits" onclick="navigate('/audits');return false" id="nav-dash">Audits</a>
       <a href="#/trends" onclick="navigate('/trends');return false" id="nav-trends">Trends</a>
       <a href="#/history" onclick="navigate('/history');return false" id="nav-history">History</a>
       <a href="#/findings" onclick="navigate('/findings');return false" id="nav-findings">Findings</a>
@@ -31,5 +35,6 @@
   </div>
   <div id="version-footer" style="position:fixed;bottom:8px;right:12px;font-size:.7rem;color:#555;z-index:10"></div>
   <script src="/js/app.js"></script>
+  <script src="/js/repos.js"></script>
 </body>
 </html>

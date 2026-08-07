@@ -20,6 +20,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # --ignore-scripts: no dependency here needs a lifecycle script, and CI
+      # holds a SONAR_TOKEN worth protecting from one
+      - run: npm ci --ignore-scripts
+      # Sonar reads coverage/lcov.info; without this the quality gate sees 0%
+      - run: mkdir -p coverage && npm run test:coverage
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7.2.1
         env:

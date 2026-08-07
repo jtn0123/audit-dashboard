@@ -6,6 +6,10 @@ const http = require('node:http');
 const FIXTURES = path.join(__dirname, 'fixtures');
 process.env.DATA_DIR = FIXTURES;
 process.env.PORT = '0';
+// Keep the GitHub collector inert: these tests cover the audit-file API only.
+delete process.env.GITHUB_TOKEN;
+delete process.env.GH_TOKEN;
+process.env.GH_AUTO_REFRESH = 'false';
 
 function get(port, urlPath) {
   return new Promise((resolve, reject) => {
@@ -14,6 +18,18 @@ function get(port, urlPath) {
       res.on('data', (c) => body += c);
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
     }).on('error', reject);
+  });
+}
+
+function post(port, urlPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, { method: 'POST' }, (res) => {
+      let body = '';
+      res.on('data', (c) => body += c);
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -143,6 +159,33 @@ describe('API tests', () => {
     const r = await getJSON(port, '/api/report/2026-01-01/lighthouse');
     assert.equal(typeof r.json.sites, 'object');
     assert.ok(r.json.sites['example.com']);
+  });
+});
+
+describe('GitHub API tests (unconfigured)', () => {
+  it('GET /api/gh/status answers even with no token', async () => {
+    const r = await getJSON(port, '/api/gh/status');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.configured, false);
+    assert.equal(r.json.repoCount, 0);
+  });
+
+  it('GET /health reports GitHub integration state', async () => {
+    const r = await getJSON(port, '/health');
+    assert.equal(r.json.github.configured, false);
+  });
+
+  it('data endpoints return 503 with a setup hint when unconfigured', async () => {
+    for (const p of ['/api/gh/repos', '/api/gh/overview', '/api/gh/prs', '/api/gh/alerts', '/api/gh/coverage']) {
+      const r = await getJSON(port, p);
+      assert.equal(r.status, 503, `${p} should be 503`);
+      assert.match(r.json.hint, /GITHUB_TOKEN/);
+    }
+  });
+
+  it('POST /api/gh/refresh returns 503 when unconfigured', async () => {
+    const r = await post(port, '/api/gh/refresh');
+    assert.equal(r.status, 503);
   });
 });
 
