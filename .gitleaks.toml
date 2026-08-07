@@ -7,6 +7,12 @@
 # a bare `MQPASS=<digits>` sit in a public repo undetected.
 
 title = "audit-dashboard gitleaks config"
+# The upstream default ruleset (AWS keys, GitHub PATs, Slack/Stripe tokens,
+# private keys, ...) runs in addition to the project rules below. Without this,
+# a custom config REPLACES the built-in ruleset entirely, so every well-known
+# provider credential format goes unscanned while the report still says "clean".
+[extend]
+useDefault = true
 
 [allowlist]
 description = "Allowlisted files and patterns"
