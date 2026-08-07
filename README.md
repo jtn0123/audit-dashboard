@@ -126,7 +126,8 @@ limit. Remaining quota is shown in the header.
 | `GET` | `/api/gh/prs` | All open PRs — `?kind=dependabot\|other\|all` |
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
-| `POST` | `/api/gh/refresh` | Force a rescan now |
+| `GET` | `/api/gh/actions` | Agent-facing work queue: verdicts + literal `gh` commands, freshness-stamped |
+| `POST` | `/api/gh/refresh` | Force a rescan now (blocks until the cache is fresh — refresh-then-read) |
 | `GET` | `/healthz` | Liveness probe (no I/O — wired into the compose healthcheck) |
 | `GET` | `/health` | Health + version + GitHub integration state |
 | `GET` | `/api/dates`, `/api/summary`, `/api/report/:date[/:agent[/md]]`, `/api/findings`, `/api/diff/:d1/:d2?`, `/api/trends` | Nightly audit data |

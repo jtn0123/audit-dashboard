@@ -501,6 +501,11 @@ app.get('/api/gh/alerts', requireGitHub, (req, res) => {
 
 app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getCoverageGaps()));
 
+// The agent-facing work queue: verdicts + literal gh commands, with the
+// staleness contract so callers refresh-then-read (POST /api/gh/refresh
+// blocks until the cache is fresh).
+app.get('/api/gh/actions', requireGitHub, (req, res) => res.json(collector.getActions()));
+
 app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
   try {
     await collector.refresh();
