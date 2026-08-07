@@ -75,7 +75,7 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_CACHE_FILE` | `.cache/github.json` | Warm cache + ETag store |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
 | `DATA_DIR` | `..` | Nightly audit reports (`YYYY-MM-DD/` dirs) for the Audits views |
-| `AUDIT_DATA_DIR` | `./audits` | Host path compose mounts read-only at `/data` (compose only) |
+| `AUDIT_DATA_DIR` | *(empty named volume)* | Host path compose mounts read-only at `/data` (compose only), e.g. `./audits` |
 | `PORT` | `3002` | Server port |
 | `HOST_BIND` | `127.0.0.1` | Host interface compose binds the port to (compose only). Set to the box's LAN IP for LAN access; never a WAN-facing interface. |
 | `ALLOWED_ORIGINS` | — | Extra CORS origins for your LAN hostnames |
