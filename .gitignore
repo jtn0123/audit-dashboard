@@ -1,1 +1,17 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# Build output
+dist/
+
+# Test output
+coverage/
+
+# OS
+.DS_Store

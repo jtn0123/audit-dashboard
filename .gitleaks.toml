@@ -1,0 +1,96 @@
+# Gitleaks configuration for audit-dashboard
+#
+# Derived from the hardened config in jtn0123/ESP32-Garage-Fan. The rules are
+# deliberately wider than the obvious `password = "..."` shape: shell scripts
+# assign secrets bare and abbreviate the variable name, so the rules have to
+# cover unquoted assignments too. A narrower earlier version of this config let
+# a bare `MQPASS=<digits>` sit in a public repo undetected.
+
+title = "audit-dashboard gitleaks config"
+
+[allowlist]
+description = "Allowlisted files and patterns"
+
+# Example/sample files only. Note there is deliberately no blanket '.*\.md$'
+# entry: docs are exactly where a copy-pasted working command tends to land.
+paths = [
+    '''\.env\.example$''',
+]
+
+# Placeholder values only. Deliberately no blanket allowlist of private IP
+# ranges: in the source config that suppressed a real leaked broker host.
+regexes = [
+    '''(?i)your[_-]?(mqtt|wifi)?[_-]?pass''',
+    '''(?i)YOUR_[A-Z_]*(PASS|SSID|TOKEN|KEY)''',
+    '''(?i)(changeme|placeholder|example|redacted)''',
+    '''(?i)x{3,}''',                # ghp_xxx / github_pat_xxx doc placeholders
+    '''(?i)\btest[-_](token|key|secret|pass(wd|word)?)\b''',  # test fixtures
+    '''\$\{[A-Z_]+\}''',       # ${API_TOKEN} style indirection
+    '''\$[A-Z_]{3,}''',        # $API_TOKEN style indirection
+    '''["']?:\?[A-Z_ ]+not set''',  # ${VAR:?VAR not set} shell guards
+
+    # --- Source-code expressions, not literal credentials -------------------
+    # The bare-credential-assignment rule is deliberately written to catch
+    # unquoted shell assignments (`MQPASS=hunter2`). In a Python/JS codebase
+    # that same shape also matches ordinary code where a token is *read* or
+    # *generated* rather than hardcoded -- `token = request.headers.get(...)`,
+    # `control_token = base64.urlsafe_b64encode(os.urandom(32))`. These
+    # patterns exclude values that are demonstrably code, never a literal
+    # secret. Note none of them allowlist a bare word: `PASS=hunter2` still
+    # fires.
+    '''[()]''',                     # any call/paren expression
+    '''[`]''',                      # JS template literal
+    '''\{\{|\}\}''',                # Jinja/Handlebars interpolation
+    '''^\{.*\}$''',                 # f-string / object interpolation
+    '''^(?i:true|false|none|null|undefined|self)$''',
+    '''^[=\[\]{}(),.;:*+-]+$''',    # pure punctuation (`==`, `[]`, `...`)
+    '''^\.{3}''',                   # `...` docs placeholder
+    '''^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+[,;)\]}]*$''',  # dotted attr ref
+    '''^[\w$]+[,;]$''',             # identifier reassigned or passed: `x = y;`
+]
+
+# Bare shell-style assignment of a credential: PASS=hunter2, TOKEN=<digits>,
+# API_SECRET=... Unquoted or quoted, any variable name ending in
+# PASS/PASSWD/PASSWORD/SECRET/TOKEN.
+[[rules]]
+id = "bare-credential-assignment"
+description = "Bare credential assignment (shell/env style)"
+regex = '''(?i)\b[A-Z0-9_]*(?:PASS(?:WD|WORD)?|SECRET|TOKEN)\s*=\s*["']?([^\s"'#$][^\s"'#]*)'''
+secretGroup = 1
+keywords = ["pass", "secret", "token"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(?:api[_\s]?key|apikey)["']?\s*[:=]\s*["']([a-zA-Z0-9]{32,})["']'''
+secretGroup = 1
+entropy = 4.5
+keywords = ["api", "key"]
+
+[rules.allowlist]
+paths = [
+    '''.*\.example''',
+    '''.*\.sample''',
+]
+
+# Credentials passed as command-line flags to an MQTT client.
+[[rules]]
+id = "mqtt-client-password-flag"
+description = "MQTT client password passed on the command line"
+regex = '''mosquitto_(?:pub|sub|rr)\b[^\n|]*?\s-P\s+["']?([^\s"'$][^\s"']*)'''
+secretGroup = 1
+keywords = ["mosquitto_pub", "mosquitto_sub", "mosquitto_rr"]
+
+[[rules]]
+id = "mqtt-password"
+description = "MQTT Password"
+regex = '''(?i)mqtt[_\s]?pass(?:word)?["']?\s*[:=]\s*["']([^"']+)["']'''
+secretGroup = 1
+keywords = ["mqtt", "pass"]
+
+[[rules]]
+id = "wifi-password"
+description = "WiFi Password"
+regex = '''(?i)wifi[_\s]?pass(?:word)?["']?\s*[:=]\s*["']([^"']+)["']'''
+secretGroup = 1
+keywords = ["wifi", "pass"]
