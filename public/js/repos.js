@@ -556,20 +556,50 @@ async function renderSettings() {
        <span class="muted"> · token ${esc(gh.tokenTail || '')} from ${gh.source === 'settings' ? 'this page' : 'the environment'}</span>`
     : '<span class="muted">Not connected — paste a token below.</span>';
 
+  const patUrl = 'https://github.com/settings/personal-access-tokens/new'
+    + '?name=patch-board-readonly'
+    + '&description=' + encodeURIComponent('Read-only token for the Patch Board dashboard. Never used to write.')
+    + '&metadata=read&contents=read&pull_requests=read&actions=read&administration=read&vulnerability_alerts=read';
+
   app.innerHTML = `<div class="setup-screen">
     <h2>Settings</h2>
     <div class="settings-card">
       <h3>GitHub token</h3>
       <p>${status}</p>
-      <p>Read-only fine-grained PAT — Repository permissions, all <strong>Read</strong>:
-         Metadata · Dependabot alerts · Pull requests · Contents · Actions · Administration.
-         Nothing is ever written to GitHub. The token is stored only on this box
-         (file mode 600 on the cache volume) and this page can never display it back.</p>
+      <p>The board needs one <strong>read-only</strong> fine-grained personal access token.
+         Nothing is ever written to GitHub with it, and it is stored only on this box
+         (file mode 600 on the cache volume) — this page can never display it back.</p>
+
+      <h4>Create it on GitHub</h4>
+      <p><a class="refresh-btn" style="display:inline-block;text-decoration:none" href="${patUrl}"
+            target="_blank" rel="noopener">Create token on GitHub ↗</a>
+         <span class="muted"> opens GitHub's token form, pre-filled where GitHub allows</span></p>
+      <ol class="token-steps">
+        <li>Sign in if asked. Under <strong>Repository access</strong> choose <strong>All repositories</strong>
+            (new repos then appear on the board automatically).</li>
+        <li>Under <strong>Repository permissions</strong>, confirm these six are set to <strong>Read-only</strong>
+            (set any the link didn't pre-fill):
+          <table class="perm-table">
+            <tr><td>Metadata</td><td class="muted">list your repos</td></tr>
+            <tr><td>Dependabot alerts</td><td class="muted">the vulnerability data</td></tr>
+            <tr><td>Pull requests</td><td class="muted">open PRs + CI status</td></tr>
+            <tr><td>Contents</td><td class="muted">detect dependabot.yml</td></tr>
+            <tr><td>Actions</td><td class="muted">"last Dependabot run" timestamp</td></tr>
+            <tr><td>Administration</td><td class="muted">whether alerts/security-updates are enabled</td></tr>
+          </table>
+          Leave every other permission on <strong>No access</strong>, and grant nothing under Account permissions.</li>
+        <li>Pick an expiration you're comfortable renewing, then <strong>Generate token</strong>.</li>
+        <li>Copy the token (it starts with <code>github_pat_</code>) and paste it below —
+            GitHub shows it only once.</li>
+      </ol>
+
       <div class="settings-row">
         <input type="password" id="token-input" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
         <button class="refresh-btn" id="token-save" onclick="saveToken()">Save & connect</button>
       </div>
       <div id="token-result"></div>
+      <p class="muted" style="margin-top:10px">When the token expires, repeat these steps and paste the new one —
+         it takes effect immediately, no restart.</p>
       ${gh.source === 'settings' ? `<p class="muted" style="margin-top:10px">
         <a href="#" onclick="clearToken();return false">Remove saved token</a>
         ${gh.envTokenPresent ? ' (falls back to the environment token)' : ' (disconnects GitHub views)'}</p>` : ''}

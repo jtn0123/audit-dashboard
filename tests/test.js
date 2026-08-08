@@ -221,6 +221,13 @@ describe('Static file tests', () => {
     assert.ok(r.headers['content-type'].includes('css'));
   });
 
+  it('settings view links to GitHub fine-grained token creation', async () => {
+    const r = await get(port, '/js/repos.js');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.includes('personal-access-tokens/new'));
+    assert.ok(r.body.includes('vulnerability_alerts=read'));
+  });
+
   it('GET /js/app.js returns JavaScript', async () => {
     const r = await get(port, '/js/app.js');
     assert.equal(r.status, 200);
