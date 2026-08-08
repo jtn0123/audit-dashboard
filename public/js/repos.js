@@ -445,15 +445,12 @@ function renderSetupScreen() {
     <ol>
       <li>Create a fine-grained PAT with <strong>Repository permissions → Metadata: Read</strong>,
           <strong>Dependabot alerts: Read</strong>, <strong>Pull requests: Read</strong>,
-          <strong>Contents: Read</strong>, <strong>Actions: Read</strong>
+          <strong>Contents: Read</strong>, <strong>Actions: Read</strong>, <strong>Administration: Read</strong>
           (a classic PAT with <code>repo</code> + <code>security_events</code> works too).</li>
-      <li>Set it as <code>GITHUB_TOKEN</code> in your <code>.env</code> / compose file.</li>
-      <li>Restart the container: <code>docker compose up -d</code></li>
+      <li>Paste it on the <a href="#/settings" onclick="navigate('/settings');return false"><strong>Settings page</strong></a> — no restart needed.</li>
     </ol>
-    <pre class="config-snippet">GITHUB_TOKEN=github_pat_xxx
-GH_OWNERS=your-username        # optional: limit to these users/orgs
-GH_REFRESH_MINUTES=30
-GH_STALE_DAYS=14</pre>
+    <p class="muted">(Setting <code>GITHUB_TOKEN</code> in the environment still works too.)</p>
+    <p><a href="#/settings" onclick="navigate('/settings');return false" class="refresh-btn" style="display:inline-block;text-decoration:none">Open Settings →</a></p>
     <p><a href="#/audits" onclick="navigate('/audits');return false">Go to the nightly audit dashboard →</a></p>
   </div>`;
 }
@@ -546,4 +543,74 @@ async function renderCoverage() {
     r => `<a class="mini-link" href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">enable ↗</a>`)}
     ${section(`No scan in ${state.status.staleDays}+ days`, 'Configured, but nothing has run recently. Check the schedule or the Dependabot job log.', stale,
     r => `<a class="mini-link" href="${esc(r.url)}/network/updates" target="_blank" rel="noopener">job log ↗</a>`)}`;
+}
+
+// === Settings view =======================================================
+
+async function renderSettings() {
+  let s = { github: {} };
+  try { s = await api('/api/settings'); } catch { /* render with unknowns */ }
+  const gh = s.github || {};
+  const status = gh.configured
+    ? `<span class="ok-text">Connected${gh.viewer ? ` as <strong>${esc(gh.viewer.login)}</strong>` : ''}</span>
+       <span class="muted"> · token ${esc(gh.tokenTail || '')} from ${gh.source === 'settings' ? 'this page' : 'the environment'}</span>`
+    : '<span class="muted">Not connected — paste a token below.</span>';
+
+  app.innerHTML = `<div class="setup-screen">
+    <h2>Settings</h2>
+    <div class="settings-card">
+      <h3>GitHub token</h3>
+      <p>${status}</p>
+      <p>Read-only fine-grained PAT — Repository permissions, all <strong>Read</strong>:
+         Metadata · Dependabot alerts · Pull requests · Contents · Actions · Administration.
+         Nothing is ever written to GitHub. The token is stored only on this box
+         (file mode 600 on the cache volume) and this page can never display it back.</p>
+      <div class="settings-row">
+        <input type="password" id="token-input" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+        <button class="refresh-btn" id="token-save" onclick="saveToken()">Save & connect</button>
+      </div>
+      <div id="token-result"></div>
+      ${gh.source === 'settings' ? `<p class="muted" style="margin-top:10px">
+        <a href="#" onclick="clearToken();return false">Remove saved token</a>
+        ${gh.envTokenPresent ? ' (falls back to the environment token)' : ' (disconnects GitHub views)'}</p>` : ''}
+    </div>
+  </div>`;
+}
+
+async function postSettingsToken(token) {
+  const res = await fetch('/api/settings/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  });
+  return { ok: res.ok, body: await res.json() };
+}
+
+async function saveToken() {
+  const input = document.getElementById('token-input');
+  const out = document.getElementById('token-result');
+  const btn = document.getElementById('token-save');
+  const token = (input.value || '').trim();
+  if (!token) { out.innerHTML = '<p class="err-text">Paste a token first.</p>'; return; }
+  btn.disabled = true; btn.textContent = 'Validating…';
+  try {
+    const { ok, body } = await postSettingsToken(token);
+    if (!ok) {
+      out.innerHTML = `<p class="err-text">${esc(body.error || 'Failed')}</p>`;
+    } else {
+      input.value = '';
+      out.innerHTML = `<p class="ok-text">Connected as <strong>${esc(body.viewer.login)}</strong>. First scan is running — the patch board fills in shortly.</p>`;
+      setTimeout(() => renderSettings(), 4000);
+    }
+  } catch (e) {
+    out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save & connect';
+  }
+}
+
+async function clearToken() {
+  const { ok, body } = await postSettingsToken('');
+  if (ok) renderSettings();
+  else document.getElementById('token-result').innerHTML = `<p class="err-text">${esc(body.error || 'Failed')}</p>`;
 }

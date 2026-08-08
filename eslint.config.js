@@ -36,6 +36,7 @@ module.exports = [
         renderPatch: 'readonly',
         renderPrs: 'readonly',
         renderCoverage: 'readonly',
+        renderSettings: 'readonly',
       },
     },
     rules: {

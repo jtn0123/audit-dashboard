@@ -213,6 +213,10 @@ async function route() {
     $('nav-coverage')?.classList.add('active');
     await renderCoverage();
     return;
+  } else if (path === '/settings') {
+    $('nav-settings')?.classList.add('active');
+    await renderSettings();
+    return;
   }
 
   if (path === '/audits') {

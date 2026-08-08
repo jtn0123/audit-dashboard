@@ -61,7 +61,7 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GITHUB_TOKEN` | — | PAT. Without it the GitHub views show a setup screen and the rest of the app still works. |
+| `GITHUB_TOKEN` | — | PAT. Optional even for the GitHub views: the **Settings page** (`#/settings`) accepts a token at runtime, stores it mode-600 on the cache volume, and it outranks this env var. Without either, the GitHub views show a setup screen and the rest of the app still works. |
 | `GH_OWNERS` | *(all accessible)* | Comma-separated users/orgs to scan |
 | `GH_REPOS_INCLUDE` / `GH_REPOS_EXCLUDE` | — | Comma-separated globs, matched against `owner/repo` and `repo` |
 | `GH_INCLUDE_ARCHIVED` | `false` | Include archived repos (risk is discounted 4× when shown) |
