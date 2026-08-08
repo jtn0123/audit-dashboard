@@ -47,20 +47,22 @@ const TOOLS = [
   },
   {
     name: 'list_actions',
-    description: 'The prioritized work queue: one entry per executable step (merge_pr, close_superseded, enable_alerts, enable_security_updates, add_dependabot_config, flag_pr), each with a verdict, why, and the literal gh command to run with YOUR credentials. Check the stale flag before executing.',
+    description: 'The prioritized work queue: one entry per executable step (merge_pr, close_superseded, enable_alerts, enable_security_updates, add_dependabot_config, flag_pr), each with a verdict, why, the literal gh command to run with YOUR credentials, and a policy stamp (auto_ok | requires_human + the .patchboard-policy.yml rule that decided it). Execute only policy=auto_ok unattended. Check the stale flag before executing.',
     inputSchema: {
       type: 'object',
       properties: {
         type: { type: 'string', description: 'Only return actions of this type (e.g. merge_pr)' },
-        repo: { type: 'string', description: 'Only return actions for this owner/repo' }
+        repo: { type: 'string', description: 'Only return actions for this owner/repo' },
+        policy: { type: 'string', enum: ['auto_ok', 'requires_human'], description: 'Only return actions with this policy stamp' }
       },
       additionalProperties: false
     },
-    run: async ({ type, repo } = {}) => {
+    run: async ({ type, repo, policy } = {}) => {
       const data = await api('GET', '/api/gh/actions');
       let actions = data.actions;
       if (type) actions = actions.filter(a => a.type === type);
       if (repo) actions = actions.filter(a => a.repo === repo);
+      if (policy) actions = actions.filter(a => a.policy === policy);
       return { ...data, actions, returned: actions.length, totalQueue: data.actions.length };
     }
   },

@@ -1,0 +1,23 @@
+# Agent guardrails for the patch board work queue (/api/gh/actions).
+#
+# Every queued action is stamped `policy: auto_ok | requires_human` plus the
+# rule that decided it. Agents execute only auto_ok unattended — that is the
+# contract in /llms.txt. Editing this file changes the stamps on the next
+# refresh; deleting it falls back to these same defaults.
+#
+# Policy is a brake, never an accelerator: nothing here can promote a major
+# bump, a red-CI PR, or a human-authored PR past its verdict.
+
+version: 1
+
+auto:
+  merge_patch: true              # green-CI patch bumps from bots
+  merge_minor: true              # green-CI minor bumps from bots
+  docker_bumps: true             # base-image patch/minor bumps (majors always flag)
+  close_superseded: true         # close a PR another PR fully covers
+  enable_alerts: true            # turn on Dependabot alerts where disabled
+  enable_security_updates: true  # turn on automatic security-fix PRs
+
+# Repos where EVERY action requires a human, regardless of the switches above.
+# Comma-separated globs, matched against owner/repo and repo.
+# never_auto: jtn0123/prod-*, some-critical-repo

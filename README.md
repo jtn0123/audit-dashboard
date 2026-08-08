@@ -147,6 +147,17 @@ The server holds no tokens and can take no action against GitHub: it only reads 
 dashboard's API. Point it elsewhere with `PATCHBOARD_URL` (default `http://127.0.0.1:3002`).
 For other MCP clients, run `node mcp/server.js` with stdio transport.
 
+### Policy guardrails
+
+`.patchboard-policy.yml` decides what an agent may execute unattended. Every queue entry
+is stamped `policy: auto_ok | requires_human` plus the rule that decided it; the contract
+(stated in `/llms.txt`) is that agents execute only `auto_ok`. Switches cover patch/minor
+merges, docker bumps, superseding closes, and the enable-alerts/security-updates fixes;
+`never_auto` globs put whole repos permanently behind a human. Policy is a brake, never an
+accelerator — it cannot promote a major bump, a red-CI PR, or a human PR past its verdict.
+The file is re-read on every queue request; in the container it ships with the image, so
+edit → push → redeploy. Override the path with `PATCHBOARD_POLICY_FILE`.
+
 ## Architecture
 
 ```text
