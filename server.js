@@ -6,6 +6,8 @@ const { loadConfig } = require('./lib/config');
 const { Collector } = require('./lib/collector');
 const { buildDigest } = require('./lib/digest');
 const { spec: openapiSpec } = require('./lib/openapi');
+const { GitHubClient } = require('./lib/github');
+const { settingsFileFor, loadSettings, saveSettings, tokenTail, looksLikeGitHubToken } = require('./lib/settings');
 
 const app = express();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -14,7 +16,20 @@ const PORT = process.env.PORT || 3000;
 const pkg = require('./package.json');
 
 const ghConfig = loadConfig();
+// A token saved through the settings page outranks the env var; clearing it
+// falls back to whatever the environment provided at boot.
+const ENV_TOKEN = ghConfig.token;
+const SETTINGS_FILE = settingsFileFor(ghConfig);
+{
+  const saved = loadSettings(SETTINGS_FILE);
+  if (saved.githubToken) ghConfig.token = saved.githubToken;
+}
 const collector = new Collector(ghConfig);
+
+function tokenSource() {
+  if (!ghConfig.token) return null;
+  return ghConfig.token === ENV_TOKEN ? 'env' : 'settings';
+}
 
 // CORS: Override Cloudflare Access headers to prevent arbitrary origin reflection.
 // ALLOWED_ORIGINS lets a self-hosted instance add its own LAN hostnames.
@@ -511,6 +526,64 @@ app.get('/api/gh/actions', requireGitHub, (req, res) => res.json(collector.getAc
 // Conflict-aware merge ordering: which merges can run in parallel, which must
 // queue behind a rebase. Derived from PR file overlap (lockfiles, usually).
 app.get('/api/gh/merge-plan', requireGitHub, (req, res) => res.json(collector.getMergePlan()));
+
+// Settings: the UI can supply the GitHub token so nobody has to touch
+// compose/Portainer env. Write-only for secrets — the GET reports source and
+// the last four characters, never the token itself. Requiring a JSON body
+// means cross-origin posts hit a CORS preflight our middleware won't approve.
+app.get('/api/settings', (req, res) => {
+  res.json({
+    github: {
+      configured: ghConfig.enabled,
+      source: tokenSource(),
+      tokenTail: tokenTail(ghConfig.token),
+      envTokenPresent: Boolean(ENV_TOKEN),
+      viewer: collector.state.viewer
+    }
+  });
+});
+
+app.post('/api/settings/token', express.json({ limit: '4kb' }), async (req, res) => {
+  if (!req.is('application/json')) return res.status(415).json({ error: 'Send application/json' });
+  const token = String(req.body?.token ?? '').trim();
+
+  if (token === '') {
+    // Clear the saved token; the env token (if any) takes back over.
+    const saved = loadSettings(SETTINGS_FILE);
+    delete saved.githubToken;
+    try { saveSettings(SETTINGS_FILE, saved); } catch (e) {
+      return res.status(500).json({ error: `Could not persist settings: ${e.message}` });
+    }
+    ghConfig.token = ENV_TOKEN;
+    collector.setToken(ENV_TOKEN);
+    return res.json({ ok: true, cleared: true, source: tokenSource() });
+  }
+
+  if (!looksLikeGitHubToken(token)) {
+    return res.status(400).json({ error: 'That does not look like a GitHub token (expected ghp_/github_pat_/gho_… format).' });
+  }
+
+  // Prove the token works before accepting it.
+  let viewer;
+  try {
+    const probe = new GitHubClient({ token, apiUrl: ghConfig.apiUrl });
+    const me = await probe.get('/user');
+    viewer = { login: me.login, name: me.name || null, avatar: me.avatar_url || null };
+  } catch (e) {
+    const detail = e.status === 401 ? 'GitHub rejected it (401)' : e.message;
+    return res.status(400).json({ error: `Token validation failed: ${detail}` });
+  }
+
+  const saved = loadSettings(SETTINGS_FILE);
+  saved.githubToken = token;
+  try { saveSettings(SETTINGS_FILE, saved); } catch (e) {
+    return res.status(500).json({ error: `Token is valid but could not be persisted: ${e.message}` });
+  }
+  ghConfig.token = token;
+  collector.setToken(token);
+  collector.refresh().catch(() => {}); // background; first scan may take a minute
+  res.json({ ok: true, viewer, source: 'settings' });
+});
 
 // Self-description: the machine-readable spec and the markdown briefing.
 // Both answer even unconfigured — the digest says so instead of erroring.

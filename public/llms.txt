@@ -41,6 +41,10 @@ machine-readable work queue for agents.
 - GET /api/gh/coverage — repos with scanning gaps and what to fix.
 - POST /api/gh/refresh — force a rescan; responds when the cache is fresh.
 - GET /api/digest.md — this data as a markdown morning briefing.
+- GET /api/settings — token status (source + masked tail only). POST
+  /api/settings/token sets the dashboard's own read-only GitHub token (the
+  operator's settings page uses this; agents should not). Secrets are
+  write-only: no endpoint ever returns a stored token.
 - GET /api/openapi.json — machine-readable spec of everything above.
 - GET /healthz — liveness. GET /health — health + version + integration state.
 - /api/dates, /api/summary, /api/report/:date[/:agent[/md]], /api/findings,
