@@ -22,6 +22,13 @@ function stubDashboard() {
       res.end(JSON.stringify(body));
     };
     if (req.url === '/api/gh/status') return send({ configured: true, repoCount: 2, freshness: { stale: false } });
+    if (req.url.startsWith('/api/gh/merge-plan')) {
+      return send({
+        dataAsOf: ACTIONS.dataAsOf, stale: false,
+        repos: [{ repo: 'me/app', trainCount: 1, trains: [{ sharedFiles: ['package-lock.json'], filesUnknown: false, steps: [{ seq: 1, pr: 7, afterPr: null, policy: 'auto_ok', commands: ['gh pr merge 7 --repo me/app --squash --delete-branch'] }] }] }],
+        note: 'trains'
+      });
+    }
     if (req.url.startsWith('/api/gh/actions')) return send(ACTIONS);
     if (req.url.startsWith('/api/gh/repos')) return send([{ fullName: 'me/app', risk: 40 }]);
     if (req.url === '/api/gh/refresh' && req.method === 'POST') return send({ ok: true });
@@ -103,11 +110,11 @@ describe('MCP server', () => {
     assert.match(m.actions[0].command, /gh pr merge 7/);
   });
 
-  it('get_merge_plan carries only merge work plus the ordering caveat', async () => {
+  it('get_merge_plan passes the conflict-aware plan through', async () => {
     const r = await client.request('tools/call', { name: 'get_merge_plan', arguments: {} });
     const plan = JSON.parse(r.result.content[0].text);
-    assert.deepEqual(plan.steps.map(s => s.type), ['merge_pr']);
-    assert.match(plan.note, /#36/);
+    assert.equal(plan.repos[0].trainCount, 1);
+    assert.equal(plan.repos[0].trains[0].steps[0].pr, 7);
   });
 
   it('surfaces API errors as tool errors, not crashes', async () => {
