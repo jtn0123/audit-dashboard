@@ -680,3 +680,8 @@ body.embed .container { max-width: none; padding: 8px; }
 .settings-row input { flex: 1 1 320px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(255,255,255,.15)); background: var(--bg, transparent); color: var(--text, inherit); font-family: monospace; }
 .ok-text { color: var(--ok, #4ade80); }
 .err-text { color: var(--critical, #f87171); }
+.token-steps { margin: 10px 0 16px 20px; }
+.token-steps li { margin-bottom: 10px; color: var(--text-dim, inherit); }
+.perm-table { margin: 8px 0; border-collapse: collapse; }
+.perm-table td { padding: 3px 14px 3px 0; }
+.perm-table td:first-child { font-weight: 600; }
