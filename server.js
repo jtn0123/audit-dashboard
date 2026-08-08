@@ -595,7 +595,7 @@ app.get('/api/settings/access', async (req, res) => {
     metadata: 'unknown', dependabot_alerts: 'unknown', pull_requests: 'unknown',
     contents: 'unknown', actions: 'unknown', administration: 'unknown'
   };
-  let repos = [];
+  let repos;
   try {
     repos = (await probe.get('/user/repos?per_page=3&sort=pushed')) || [];
     access.metadata = 'ok';
