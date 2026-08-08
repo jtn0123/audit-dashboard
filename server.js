@@ -585,6 +585,47 @@ app.post('/api/settings/token', express.json({ limit: '4kb' }), async (req, res)
   res.json({ ok: true, viewer, source: 'settings' });
 });
 
+// Live probe: what can the CURRENT token actually see? One cheap request per
+// permission against up to three repos (fine-grained PATs answer 403/404 for
+// missing grants, so a single repo can be ambiguous). ~7 API calls total.
+app.get('/api/settings/access', async (req, res) => {
+  if (!ghConfig.enabled) return res.status(503).json({ error: 'No token configured' });
+  const probe = new GitHubClient({ token: ghConfig.token, apiUrl: ghConfig.apiUrl });
+  const access = {
+    metadata: 'unknown', dependabot_alerts: 'unknown', pull_requests: 'unknown',
+    contents: 'unknown', actions: 'unknown', administration: 'unknown'
+  };
+  let repos;
+  try {
+    repos = (await probe.get('/user/repos?per_page=3&sort=pushed')) || [];
+    access.metadata = 'ok';
+  } catch {
+    access.metadata = 'denied';
+    return res.json({ checkedAt: new Date().toISOString(), probedRepos: [], access });
+  }
+  // Administration read makes security_and_analysis appear on the repo object.
+  if (repos.length) {
+    access.administration = repos.some(r => r.security_and_analysis != null) ? 'ok' : 'denied';
+  }
+  const CHECKS = [
+    ['dependabot_alerts', r => `/repos/${r}/dependabot/alerts?per_page=1`],
+    ['pull_requests', r => `/repos/${r}/pulls?per_page=1&state=open`],
+    ['contents', r => `/repos/${r}/contents/`],
+    ['actions', r => `/repos/${r}/actions/runs?per_page=1`]
+  ];
+  const names = repos.map(r => r.full_name);
+  await Promise.all(CHECKS.map(async ([key, pathFor]) => {
+    for (const name of names) {
+      try {
+        const { status } = await probe.request(pathFor(name), { allowStatus: [401, 403, 404] });
+        if (status >= 200 && status < 300) { access[key] = 'ok'; return; }
+        access[key] = 'denied'; // keep trying — another repo may say yes
+      } catch { access[key] = 'unknown'; }
+    }
+  }));
+  res.json({ checkedAt: new Date().toISOString(), probedRepos: names, access });
+});
+
 // Self-description: the machine-readable spec and the markdown briefing.
 // Both answer even unconfigured — the digest says so instead of erroring.
 app.get('/api/openapi.json', (req, res) => res.json(openapiSpec));

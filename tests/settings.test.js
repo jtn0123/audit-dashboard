@@ -26,7 +26,14 @@ function fakeGitHub() {
       if (auth.includes(GOOD_TOKEN)) return send({ login: 'justin', name: 'J' });
       return send({ message: 'Bad credentials' }, 401);
     }
-    if (req.url.startsWith('/user/repos')) return send([]);
+    if (req.url.startsWith('/user/repos')) {
+      // security_and_analysis present = administration read works
+      return send([{ full_name: 'justin/app', name: 'app', owner: { login: 'justin' }, security_and_analysis: {} }]);
+    }
+    if (req.url.startsWith('/repos/justin/app/dependabot/alerts')) return send([]);
+    if (req.url.startsWith('/repos/justin/app/pulls')) return send([]);
+    if (req.url.startsWith('/repos/justin/app/contents/')) return send({ message: 'Resource not accessible by personal access token' }, 403);
+    if (req.url.startsWith('/repos/justin/app/actions/runs')) return send({ workflow_runs: [] });
     send({ message: 'Not Found' }, 404);
   });
 }
@@ -139,6 +146,18 @@ describe('settings API', () => {
 
     const gh = await request(port, '/api/gh/status');
     assert.equal(gh.json.configured, true);
+  });
+
+  it('access probe reports per-permission ok/denied for the current token', async () => {
+    const r = await request(port, '/api/settings/access');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.probedRepos, ['justin/app']);
+    assert.equal(r.json.access.metadata, 'ok');
+    assert.equal(r.json.access.dependabot_alerts, 'ok');
+    assert.equal(r.json.access.pull_requests, 'ok');
+    assert.equal(r.json.access.actions, 'ok');
+    assert.equal(r.json.access.administration, 'ok');
+    assert.equal(r.json.access.contents, 'denied'); // fake denies contents
   });
 
   it('clearing falls back to the (absent) env token and disconnects', async () => {
