@@ -566,31 +566,19 @@ async function renderSettings() {
     <div class="settings-card">
       <h3>GitHub token</h3>
       <p>${status}</p>
-      <p>The board needs one <strong>read-only</strong> fine-grained personal access token.
-         Nothing is ever written to GitHub with it, and it is stored only on this box
-         (file mode 600 on the cache volume) — this page can never display it back.</p>
+      <p class="muted">Read-only. Never written back to GitHub. Stored only on this box; never displayed again.</p>
+
+      ${gh.configured ? '<h4>What this token can see</h4><div id="access-grid" class="access-grid"><span class="muted">Checking…</span></div>' : ''}
 
       <h4>Create it on GitHub</h4>
       <p><a class="refresh-btn" style="display:inline-block;text-decoration:none" href="${patUrl}"
             target="_blank" rel="noopener">Create token on GitHub ↗</a>
-         <span class="muted"> opens GitHub's token form, pre-filled where GitHub allows</span></p>
+         <span class="muted"> — form opens pre-filled</span></p>
       <ol class="token-steps">
-        <li>Sign in if asked. Under <strong>Repository access</strong> choose <strong>All repositories</strong>
-            (new repos then appear on the board automatically).</li>
-        <li>Under <strong>Repository permissions</strong>, confirm these six are set to <strong>Read-only</strong>
-            (set any the link didn't pre-fill):
-          <table class="perm-table">
-            <tr><td>Metadata</td><td class="muted">list your repos</td></tr>
-            <tr><td>Dependabot alerts</td><td class="muted">the vulnerability data</td></tr>
-            <tr><td>Pull requests</td><td class="muted">open PRs + CI status</td></tr>
-            <tr><td>Contents</td><td class="muted">detect dependabot.yml</td></tr>
-            <tr><td>Actions</td><td class="muted">"last Dependabot run" timestamp</td></tr>
-            <tr><td>Administration</td><td class="muted">whether alerts/security-updates are enabled</td></tr>
-          </table>
-          Leave every other permission on <strong>No access</strong>, and grant nothing under Account permissions.</li>
-        <li>Pick an expiration you're comfortable renewing, then <strong>Generate token</strong>.</li>
-        <li>Copy the token (it starts with <code>github_pat_</code>) and paste it below —
-            GitHub shows it only once.</li>
+        <li>Repository access: <strong>All repositories</strong>.</li>
+        <li>Check the six permissions are <strong>Read-only</strong> (same six as the grid above); everything else No access.</li>
+        <li>Pick an expiration → <strong>Generate</strong>.</li>
+        <li>Copy the <code>github_pat_…</code> and paste it below — GitHub shows it once.</li>
       </ol>
 
       <div class="settings-row">
@@ -605,6 +593,32 @@ async function renderSettings() {
         ${gh.envTokenPresent ? ' (falls back to the environment token)' : ' (disconnects GitHub views)'}</p>` : ''}
     </div>
   </div>`;
+  if (gh.configured) loadAccessGrid();
+}
+
+const ACCESS_ROWS = [
+  ['metadata', 'Repo list', 'nothing works without it'],
+  ['dependabot_alerts', 'Dependabot alerts', 'the vulnerability columns'],
+  ['pull_requests', 'Pull requests', 'PR + CI columns'],
+  ['contents', 'Contents', 'dependabot.yml detection'],
+  ['actions', 'Actions', 'last-scan timestamps'],
+  ['administration', 'Administration', 'alerts-enabled / security-updates flags']
+];
+
+async function loadAccessGrid() {
+  const el = document.getElementById('access-grid');
+  if (!el) return;
+  try {
+    const a = await api('/api/settings/access');
+    el.innerHTML = ACCESS_ROWS.map(([key, label, consequence]) => {
+      const st = a.access[key];
+      const icon = st === 'ok' ? '<span class="ok-text">✓</span>' : st === 'denied' ? '<span class="err-text">✗</span>' : '<span class="muted">?</span>';
+      const note = st === 'ok' ? '' : ` <span class="muted">— missing: ${consequence}</span>`;
+      return `<div class="access-row">${icon} <strong>${label}</strong>${note}</div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<span class="err-text">Check failed: ${esc(e.message)}</span>`;
+  }
 }
 
 async function postSettingsToken(token) {
@@ -630,7 +644,7 @@ async function saveToken() {
     } else {
       input.value = '';
       out.innerHTML = `<p class="ok-text">Connected as <strong>${esc(body.viewer.login)}</strong>. First scan is running — the patch board fills in shortly.</p>`;
-      setTimeout(() => renderSettings(), 4000);
+      setTimeout(() => renderSettings(), 3000); // re-render → access grid re-checks the new token
     }
   } catch (e) {
     out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`;
