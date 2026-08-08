@@ -20,9 +20,13 @@ machine-readable work queue for agents.
 
 - GET /api/gh/status — token state, last scan, rate limit, freshness. Always answers.
 - GET /api/gh/actions — THE WORK QUEUE. One entry per executable step:
-  {type, repo, pr?, verdict, why, command, preconditions?}. Types: merge_pr,
-  close_superseded, enable_alerts, enable_security_updates,
+  {type, repo, pr?, verdict, why, command, preconditions?, policy, policyRule}.
+  Types: merge_pr, close_superseded, enable_alerts, enable_security_updates,
   add_dependabot_config, flag_pr. Sorted executable-first, then by risk.
+  policy is auto_ok or requires_human, decided by .patchboard-policy.yml
+  (the operator's guardrails; policyRule names the rule). EXECUTE ONLY
+  policy=auto_ok UNATTENDED — requires_human entries are for reporting.
+  Policy is a brake, never an accelerator: it cannot promote past a verdict.
 - GET /api/gh/repos?filter=&search=&sort= — full per-repo posture: alerts by
   severity, Dependabot config state, PRs with CI rollups + verdict inputs,
   last-scan evidence, gaps, risk (0–100, weights documented in the README).
