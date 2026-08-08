@@ -68,16 +68,9 @@ const TOOLS = [
   },
   {
     name: 'get_merge_plan',
-    description: 'The merge work from the queue (merge_pr + close_superseded) in execution order, with preconditions. v0: risk-ordered; conflict-aware ordering (lockfile overlap → serial rebases) arrives with the merge-train planner (#36) — until then, re-check PR state between merges in the same repo.',
+    description: 'Conflict-aware merge ordering: per-repo "trains" built from PR file overlap (lockfiles, usually). Steps within a train are strictly sequential — each carries the full command sequence including the rebase choreography; separate trains, including across repos, run in parallel safely. Respect the policy stamps: execute only policy=auto_ok steps unattended.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    run: async () => {
-      const data = await api('GET', '/api/gh/actions');
-      const plan = data.actions.filter(a => a.type === 'merge_pr' || a.type === 'close_superseded');
-      return {
-        dataAsOf: data.dataAsOf, stale: data.stale, steps: plan,
-        note: 'Ordering is risk-based, not conflict-aware yet (#36). After each merge in a repo, expect siblings there to need a rebase; re-verify CI with the precondition commands before every merge.'
-      };
-    }
+    run: () => api('GET', '/api/gh/merge-plan')
   },
   {
     name: 'get_repo_posture',

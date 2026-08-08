@@ -508,6 +508,10 @@ app.get('/api/gh/coverage', requireGitHub, (req, res) => res.json(collector.getC
 // blocks until the cache is fresh).
 app.get('/api/gh/actions', requireGitHub, (req, res) => res.json(collector.getActions()));
 
+// Conflict-aware merge ordering: which merges can run in parallel, which must
+// queue behind a rebase. Derived from PR file overlap (lockfiles, usually).
+app.get('/api/gh/merge-plan', requireGitHub, (req, res) => res.json(collector.getMergePlan()));
+
 // Self-description: the machine-readable spec and the markdown briefing.
 // Both answer even unconfigured — the digest says so instead of erroring.
 app.get('/api/openapi.json', (req, res) => res.json(openapiSpec));

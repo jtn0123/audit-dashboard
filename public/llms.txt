@@ -27,6 +27,12 @@ machine-readable work queue for agents.
   (the operator's guardrails; policyRule names the rule). EXECUTE ONLY
   policy=auto_ok UNATTENDED — requires_human entries are for reporting.
   Policy is a brake, never an accelerator: it cannot promote past a verdict.
+- GET /api/gh/merge-plan — conflict-aware merge ordering. Per-repo "trains"
+  built from PR file overlap (lockfiles, usually): steps within a train are
+  STRICTLY SEQUENTIAL and each carries its full command sequence including
+  the rebase choreography; separate trains (and repos) run in parallel
+  safely. Prefer this over draining merge_pr entries from /api/gh/actions
+  by hand. Policy stamps apply here too.
 - GET /api/gh/repos?filter=&search=&sort= — full per-repo posture: alerts by
   severity, Dependabot config state, PRs with CI rollups + verdict inputs,
   last-scan evidence, gaps, risk (0–100, weights documented in the README).

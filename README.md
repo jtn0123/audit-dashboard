@@ -127,6 +127,7 @@ limit. Remaining quota is shown in the header.
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
 | `GET` | `/api/gh/actions` | Agent-facing work queue: verdicts + literal `gh` commands, freshness-stamped |
+| `GET` | `/api/gh/merge-plan` | Conflict-aware merge ordering — serial "trains" from PR file overlap, parallel otherwise |
 | `POST` | `/api/gh/refresh` | Force a rescan now (blocks until the cache is fresh — refresh-then-read) |
 | `GET` | `/healthz` | Liveness probe (no I/O — wired into the compose healthcheck) |
 | `GET` | `/health` | Health + version + GitHub integration state |

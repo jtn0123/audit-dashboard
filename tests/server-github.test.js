@@ -56,6 +56,9 @@ function fakeGitHubServer() {
           created_at: ago(5), updated_at: ago(1)
         }]);
       }
+      if (/^\/pulls\/\d+\/files/.test(rest)) {
+        return send([{ filename: 'package.json' }, { filename: 'package-lock.json' }]);
+      }
       if (rest.startsWith('/pulls')) {
         if (full !== 'me/covered') return send([]);
         return send([
@@ -206,6 +209,22 @@ describe('GitHub API tests (configured)', () => {
     assert.match(merge.command, /gh pr merge 7 --repo me\/covered --squash/);
     // Executable queue order: enable_alerts before merge_pr before config gaps.
     assert.ok(types.indexOf('enable_alerts') < types.indexOf('merge_pr'));
+  });
+
+  it('GET /api/gh/merge-plan builds trains from fetched PR file lists', async () => {
+    const r = await request(port, '/api/gh/merge-plan');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.dataAsOf);
+    assert.equal(r.json.repos.length, 1);
+    const [repo] = r.json.repos;
+    assert.equal(repo.repo, 'me/covered');
+    assert.equal(repo.trainCount, 1);
+    const [step] = repo.trains[0].steps;
+    assert.equal(step.pr, 7);
+    assert.equal(step.afterPr, null);
+    assert.equal(step.policy, 'auto_ok');
+    assert.equal(repo.trains[0].filesUnknown, false);
+    assert.match(step.commands.at(-1), /gh pr merge 7/);
   });
 
   it('GET /api/openapi.json describes every /api/gh endpoint', async () => {
