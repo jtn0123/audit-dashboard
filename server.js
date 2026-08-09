@@ -603,9 +603,18 @@ app.get('/api/settings/access', async (req, res) => {
     access.metadata = 'denied';
     return res.json({ checkedAt: new Date().toISOString(), probedRepos: [], access });
   }
-  // Administration read makes security_and_analysis appear on the repo object.
-  if (repos.length) {
-    access.administration = repos.some(r => r.security_and_analysis != null) ? 'ok' : 'denied';
+  // Administration read makes security_and_analysis appear on the SINGLE-repo
+  // object — the list endpoint withholds it at every privilege level, so it
+  // must never be used as the probe (that mistake shipped once already).
+  const names = repos.map(r => r.full_name);
+  if (names.length) {
+    for (const name of names) {
+      try {
+        const detail = await probe.get(`/repos/${name}`);
+        if (detail?.security_and_analysis != null) { access.administration = 'ok'; break; }
+        access.administration = 'denied';
+      } catch { access.administration = 'unknown'; }
+    }
   }
   const CHECKS = [
     ['dependabot_alerts', r => `/repos/${r}/dependabot/alerts?per_page=1`],
@@ -613,7 +622,6 @@ app.get('/api/settings/access', async (req, res) => {
     ['contents', r => `/repos/${r}/contents/`],
     ['actions', r => `/repos/${r}/actions/runs?per_page=1`]
   ];
-  const names = repos.map(r => r.full_name);
   await Promise.all(CHECKS.map(async ([key, pathFor]) => {
     for (const name of names) {
       try {

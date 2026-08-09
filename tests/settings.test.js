@@ -27,8 +27,12 @@ function fakeGitHub() {
       return send({ message: 'Bad credentials' }, 401);
     }
     if (req.url.startsWith('/user/repos')) {
-      // security_and_analysis present = administration read works
-      return send([{ full_name: 'justin/app', name: 'app', owner: { login: 'justin' }, security_and_analysis: {} }]);
+      // Realistic: the LIST endpoint always withholds security_and_analysis.
+      return send([{ full_name: 'justin/app', name: 'app', owner: { login: 'justin' } }]);
+    }
+    if (req.url === '/repos/justin/app') {
+      // …the single-repo object carries it when administration read is granted.
+      return send({ full_name: 'justin/app', security_and_analysis: {} });
     }
     if (req.url.startsWith('/repos/justin/app/dependabot/alerts')) return send([]);
     if (req.url.startsWith('/repos/justin/app/pulls')) return send([]);
