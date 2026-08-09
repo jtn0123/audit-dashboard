@@ -576,9 +576,8 @@ async function renderSettings() {
          <span class="muted"> — form opens pre-filled</span></p>
       <ol class="token-steps">
         <li>Repository access: <strong>All repositories</strong>.</li>
-        <li>Check the six permissions are <strong>Read-only</strong> (same six as the grid above); everything else No access.
-            <br><strong>⚠ Administration won't pre-fill</strong> — GitHub refuses to pre-select it; tick it manually or the
-            alerts-enabled/security-updates detection goes dark. The grid above catches this.</li>
+        <li>Check all six permissions really are <strong>Read-only</strong> (same six as the grid above — GitHub may not
+            pre-fill every one); everything else No access. The grid catches anything missing.</li>
         <li>Pick an expiration → <strong>Generate</strong>.</li>
         <li>Copy the <code>github_pat_…</code> and paste it below — GitHub shows it once.</li>
       </ol>
