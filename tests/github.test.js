@@ -343,7 +343,9 @@ function fakeGitHub() {
         return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
       }
       if (rest.includes('/check-runs')) {
-        return json({ check_runs: rest.startsWith('/commits/sha1') ? [{ status: 'completed', conclusion: 'success' }] : [{ status: 'completed', conclusion: 'failure' }] });
+        return json({ check_runs: rest.startsWith('/commits/sha1')
+          ? [{ name: 'checks', status: 'completed', conclusion: 'success' }]
+          : [{ name: 'SonarCloud Scan', status: 'completed', conclusion: 'failure' }] });
       }
     }
     return fakeResponse({ status: 404, body: { message: 'Not Found' } });
@@ -378,6 +380,12 @@ describe('collector end-to-end', () => {
     assert.equal(covered.prs.counts.other, 1);
     assert.equal(covered.prs.dependabot[0].checks.state, 'passing');
     assert.equal(covered.prs.other[0].checks.state, 'failing');
+    // A failing Sonar check is a config problem (dead SONAR_TOKEN), surfaced
+    // as a gap that carries the two links that fix it.
+    const sonar = covered.gaps.find(g => g.id === 'sonar-failing');
+    assert.ok(sonar, 'expected sonar-failing gap');
+    assert.equal(sonar.links.length, 2);
+    assert.match(sonar.links[1].url, /me\/covered\/settings\/secrets\/actions$/);
     assert.equal(covered.lastScan.source, 'dependabot-run');
 
     const naked = state.repos.find(r => r.fullName === 'me/naked');
