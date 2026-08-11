@@ -15,7 +15,7 @@ const FILTERS = [
   { key: 'critical', label: 'Critical / high' },
   { key: 'dependabot-prs', label: 'Update PRs' },
   { key: 'no-dependabot', label: 'No Dependabot' },
-  { key: 'stale', label: 'Stale scans' },
+  { key: 'stale', label: 'Stale GitHub scans' },
   { key: 'clean', label: 'Clean' },
   { key: 'all', label: 'All repos' }
 ];
@@ -24,7 +24,7 @@ const SORTS = [
   { key: 'risk', label: 'Risk' },
   { key: 'alerts', label: 'Alerts' },
   { key: 'prs', label: 'PRs' },
-  { key: 'scan', label: 'Oldest scan' },
+  { key: 'scan', label: 'Oldest GitHub scan' },
   { key: 'name', label: 'Name' }
 ];
 
@@ -161,7 +161,7 @@ function renderKpis(s, staleDays) {
       sub: 'human + app PRs', href: '#/prs'
     },
     {
-      filter: 'stale', label: 'Stale scans', value: cov.staleScans.length + cov.neverScanned.length,
+      filter: 'stale', label: 'Stale GitHub scans', value: cov.staleScans.length + cov.neverScanned.length,
       tone: (cov.staleScans.length + cov.neverScanned.length) ? 'warning' : 'ok',
       sub: `${cov.neverScanned.length} never scanned · >${staleDays}d`
     }
@@ -260,7 +260,7 @@ function renderRepoTable() {
     <div class="repo-table">
       <div class="repo-head">
         <span>Repository</span><span>Dependabot</span><span>Open alerts</span>
-        <span>PRs</span><span>Last scan</span><span>Next action</span>
+        <span>PRs</span><span>GitHub last scan</span><span>Next action</span>
       </div>
       ${repos.map(renderRepoRow).join('')}
     </div>
@@ -559,7 +559,7 @@ async function renderSettings() {
   const patUrl = 'https://github.com/settings/personal-access-tokens/new'
     + '?name=patch-board-readonly'
     + '&description=' + encodeURIComponent('Read-only token for the Patch Board dashboard. Never used to write.')
-    + '&metadata=read&contents=read&pull_requests=read&actions=read&administration=read&vulnerability_alerts=read';
+    + '&metadata=read&contents=read&pull_requests=read&actions=read&administration=read&vulnerability_alerts=read&security_events=read';
 
   app.innerHTML = `<div class="setup-screen">
     <h2>Settings</h2>
@@ -603,7 +603,8 @@ const ACCESS_ROWS = [
   ['pull_requests', 'Pull requests', 'PR + CI columns'],
   ['contents', 'Contents', 'dependabot.yml detection'],
   ['actions', 'Actions', 'last-scan timestamps'],
-  ['administration', 'Administration', 'alerts-enabled / security-updates flags']
+  ['administration', 'Administration', 'alerts-enabled / security-updates flags'],
+  ['code_scanning', 'Code scanning', 'CodeQL status + analysis times']
 ];
 
 async function loadAccessGrid() {

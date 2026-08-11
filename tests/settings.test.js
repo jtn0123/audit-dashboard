@@ -161,6 +161,9 @@ describe('settings API', () => {
     assert.equal(r.json.access.pull_requests, 'ok');
     assert.equal(r.json.access.actions, 'ok');
     assert.equal(r.json.access.administration, 'ok');
+    // The fake 404s the code-scanning probe: a scoped token seeing "no
+    // analyses here" proves the grant works — 404 is ok, only 403 is denied.
+    assert.equal(r.json.access.code_scanning, 'ok');
     assert.equal(r.json.access.contents, 'denied'); // fake denies contents
   });
 
