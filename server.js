@@ -593,7 +593,8 @@ app.get('/api/settings/access', async (req, res) => {
   const probe = new GitHubClient({ token: ghConfig.token, apiUrl: ghConfig.apiUrl });
   const access = {
     metadata: 'unknown', dependabot_alerts: 'unknown', pull_requests: 'unknown',
-    contents: 'unknown', actions: 'unknown', administration: 'unknown'
+    contents: 'unknown', actions: 'unknown', administration: 'unknown',
+    code_scanning: 'unknown'
   };
   let repos;
   try {
@@ -616,17 +617,22 @@ app.get('/api/settings/access', async (req, res) => {
       } catch { access.administration = 'unknown'; }
     }
   }
+  // Third element: statuses that prove the GRANT works even though the
+  // feature answers negatively. Code scanning returns 404 when the repo has
+  // no analyses — that is a scoped token seeing an honest "nothing here",
+  // while a missing grant is a 403.
   const CHECKS = [
     ['dependabot_alerts', r => `/repos/${r}/dependabot/alerts?per_page=1`],
     ['pull_requests', r => `/repos/${r}/pulls?per_page=1&state=open`],
     ['contents', r => `/repos/${r}/contents/`],
-    ['actions', r => `/repos/${r}/actions/runs?per_page=1`]
+    ['actions', r => `/repos/${r}/actions/runs?per_page=1`],
+    ['code_scanning', r => `/repos/${r}/code-scanning/analyses?per_page=1`, [404]]
   ];
-  await Promise.all(CHECKS.map(async ([key, pathFor]) => {
+  await Promise.all(CHECKS.map(async ([key, pathFor, okAnyway = []]) => {
     for (const name of names) {
       try {
         const { status } = await probe.request(pathFor(name), { allowStatus: [401, 403, 404] });
-        if (status >= 200 && status < 300) { access[key] = 'ok'; return; }
+        if ((status >= 200 && status < 300) || okAnyway.includes(status)) { access[key] = 'ok'; return; }
         access[key] = 'denied'; // keep trying — another repo may say yes
       } catch { access[key] = 'unknown'; }
     }

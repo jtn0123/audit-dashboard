@@ -336,7 +336,12 @@ function fakeGitHub() {
         seen.dependabotRunEvents.push(searchParams.get('event'));
         return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
       }
-      if (rest.startsWith('/code-scanning/analyses')) return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
+      if (rest.startsWith('/code-scanning/analyses')) {
+        // me/naked: the token cannot look (missing "Code scanning alerts"
+        // grant) — must surface as unknown, never as "disabled".
+        if (full === 'me/naked') return fakeResponse({ status: 403, body: { message: 'Resource not accessible by personal access token' } });
+        return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
+      }
       if (rest.includes('/check-runs')) {
         return json({ check_runs: rest.startsWith('/commits/sha1') ? [{ status: 'completed', conclusion: 'success' }] : [{ status: 'completed', conclusion: 'failure' }] });
       }
@@ -380,6 +385,10 @@ describe('collector end-to-end', () => {
     assert.equal(naked.dependabot.alertsEnabled, false);
     assert.match(naked.dependabot.alertsError, /disabled/i);
     assert.equal(naked.lastScan.source, 'none');
+    // 403 on the code-scanning probe = the token cannot look; tri-state null,
+    // never false — "disabled" is reserved for a genuine 404.
+    assert.equal(naked.codeScanning.enabled, null);
+    assert.equal(covered.codeScanning.enabled, false);
     assert.ok(naked.gaps.some(g => g.id === 'alerts-disabled'));
 
     // Rollups the UI depends on
