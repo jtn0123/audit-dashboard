@@ -347,7 +347,7 @@ function renderRepoDetail(r) {
       <div class="gap-list">${r.gaps.map(g => `
         <div class="gap gap-${g.severity}">
           <span class="gap-label">${esc(g.label)}${g.detail ? ` <span class="muted">(${esc(g.detail)})</span>` : ''}</span>
-          <span class="gap-hint">${esc(g.hint)}</span>
+          <span class="gap-hint">${esc(g.hint)}${(g.links || []).map(l => ` · <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</span>
         </div>`).join('')}</div>
     </div>` : ''}
 
@@ -597,14 +597,16 @@ async function renderSettings() {
   if (gh.configured) loadAccessGrid();
 }
 
+// Fourth element: the permission to add on the token. Editing a fine-grained
+// PAT's permissions applies to the existing token — no regeneration needed.
 const ACCESS_ROWS = [
-  ['metadata', 'Repo list', 'nothing works without it'],
-  ['dependabot_alerts', 'Dependabot alerts', 'the vulnerability columns'],
-  ['pull_requests', 'Pull requests', 'PR + CI columns'],
-  ['contents', 'Contents', 'dependabot.yml detection'],
-  ['actions', 'Actions', 'last-scan timestamps'],
-  ['administration', 'Administration', 'alerts-enabled / security-updates flags'],
-  ['code_scanning', 'Code scanning', 'CodeQL status + analysis times']
+  ['metadata', 'Repo list', 'nothing works without it', 'Metadata: read'],
+  ['dependabot_alerts', 'Dependabot alerts', 'the vulnerability columns', 'Dependabot alerts: read'],
+  ['pull_requests', 'Pull requests', 'PR + CI columns', 'Pull requests: read'],
+  ['contents', 'Contents', 'dependabot.yml detection', 'Contents: read'],
+  ['actions', 'Actions', 'last-scan timestamps', 'Actions: read'],
+  ['administration', 'Administration', 'alerts-enabled / security-updates flags', 'Administration: read'],
+  ['code_scanning', 'Code scanning', 'CodeQL status + analysis times', 'Code scanning alerts: read']
 ];
 
 async function loadAccessGrid() {
@@ -612,10 +614,13 @@ async function loadAccessGrid() {
   if (!el) return;
   try {
     const a = await api('/api/settings/access');
-    el.innerHTML = ACCESS_ROWS.map(([key, label, consequence]) => {
+    el.innerHTML = ACCESS_ROWS.map(([key, label, consequence, perm]) => {
       const st = a.access[key];
       const icon = st === 'ok' ? '<span class="ok-text">✓</span>' : st === 'denied' ? '<span class="err-text">✗</span>' : '<span class="muted">?</span>';
-      const note = st === 'ok' ? '' : ` <span class="muted">— missing: ${consequence}</span>`;
+      const fix = st === 'denied'
+        ? ` · <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">add “${perm}” ↗</a>`
+        : '';
+      const note = st === 'ok' ? '' : ` <span class="muted">— missing: ${consequence}${fix}</span>`;
       return `<div class="access-row">${icon} <strong>${label}</strong>${note}</div>`;
     }).join('');
   } catch (e) {
