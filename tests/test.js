@@ -58,7 +58,10 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
+  if (!server) return;
+  // Keep-alive sockets outlive close(); without this the process never exits.
+  server.closeAllConnections?.();
+  server.close();
 });
 
 describe('API tests', () => {

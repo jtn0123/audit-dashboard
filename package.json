@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.js",
-    "test:coverage": "node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout tests/*.js",
+    "test": "node --test --test-timeout=60000 tests/*.js",
+    "test:coverage": "node --test --test-timeout=60000 --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout tests/*.js",
     "lint": "eslint ."
   },
   "dependencies": {

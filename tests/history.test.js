@@ -140,7 +140,13 @@ describe('HistoryStore', () => {
   });
 
   it('survives an unwritable path without throwing', () => {
-    const store = new HistoryStore({ file: '/proc/definitely/not/writable/history.json', now: () => NOW });
+    // Parent is a regular file, so mkdir fails with ENOTDIR on every platform.
+    // A /proc path would only be unwritable on Linux, making this test mean
+    // different things on the machine that wrote it and the one that runs it.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-unwritable-'));
+    const blocker = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(blocker, 'x');
+    const store = new HistoryStore({ file: path.join(blocker, 'history.json'), now: () => NOW });
     assert.doesNotThrow(() => store.record(state()));
   });
 

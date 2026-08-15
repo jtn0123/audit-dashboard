@@ -84,8 +84,14 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
-  if (gh) gh.close();
+  // closeAllConnections is required, not tidy-up: Node's global fetch pools
+  // keep-alive sockets to the fake GitHub server, and plain close() waits on
+  // them forever, so the test process never exits and `node --test` hangs.
+  for (const s of [server, gh]) {
+    if (!s) continue;
+    s.closeAllConnections?.();
+    s.close();
+  }
   if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
 });
 
