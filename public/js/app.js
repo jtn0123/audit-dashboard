@@ -59,6 +59,16 @@ window.addEventListener('unhandledrejection', (e) => {
   showError('Something went wrong', e.reason?.message || String(e.reason));
 });
 
+/**
+ * Chart instances are created in insights.js but owned here, so that creating
+ * and destroying them live together — a view pushing straight onto the shared
+ * array left no visible writer beside the declaration.
+ */
+function trackChart(chart) {
+  charts.push(chart);
+  return chart;
+}
+
 function destroyCharts() {
   charts.forEach(c => { try { c.destroy(); } catch { /* already gone */ } });
   charts = [];

@@ -140,7 +140,8 @@ describe('HistoryStore', () => {
   });
 
   it('survives an unwritable path without throwing', () => {
-    // Parent is a regular file, so mkdir fails with ENOTDIR on every platform.
+    // Parent is a regular file, so mkdir fails on every platform (ENOTDIR on
+    // Linux, EEXIST on macOS) — what matters is that it fails and is caught.
     // A /proc path would only be unwritable on Linux, making this test mean
     // different things on the machine that wrote it and the one that runs it.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-unwritable-'));

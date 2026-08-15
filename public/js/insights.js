@@ -255,7 +255,7 @@ function chartReady(canvas) {
 function drawBacklogChart(d) {
   const canvas = $('backlogChart');
   if (!chartReady(canvas)) return;
-  charts.push(new Chart(canvas, {
+  trackChart(new Chart(canvas, {
     type: 'line',
     data: {
       labels: axisLabels(d.days),
@@ -276,7 +276,7 @@ function drawBacklogChart(d) {
 function drawActivityChart(d) {
   const canvas = $('activityChart');
   if (!chartReady(canvas)) return;
-  charts.push(new Chart(canvas, {
+  trackChart(new Chart(canvas, {
     type: 'bar',
     data: {
       labels: axisLabels(d.days),
@@ -292,7 +292,7 @@ function drawActivityChart(d) {
 function drawRecordedChart(snapshots) {
   const canvas = $('recordedChart');
   if (!chartReady(canvas)) return;
-  charts.push(new Chart(canvas, {
+  trackChart(new Chart(canvas, {
     type: 'line',
     data: {
       labels: snapshots.map(s => shortDate(s.at)),

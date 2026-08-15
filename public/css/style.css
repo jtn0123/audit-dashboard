@@ -26,7 +26,7 @@ nav {
   background: var(--bg-surface); border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 100;
 }
-nav .logo { font-weight: 700; font-size: 1.1rem; margin-right: 16px; cursor: pointer; color: var(--text); }
+nav .logo { font-weight: 700; font-size: 1.1rem; margin-right: 16px; cursor: pointer; color: var(--text); text-decoration: none; }
 nav .logo span { color: var(--text-dim); font-weight: 400; }
 .nav-links { display: flex; gap: 4px; }
 .nav-links a {
@@ -112,7 +112,7 @@ nav .spacer { flex: 1; }
 .badge-info { background: rgba(139, 148, 158, 0.15); color: var(--text-dim); border: 1px solid var(--border); }
 .chart-box {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 20px; min-height: 300px;
+  padding: 20px; min-height: 300px; margin-bottom: 20px;
 }
 .chart-box h3 { font-size: 0.95rem; font-weight: 500; margin-bottom: 16px; color: var(--text-dim); }
 .chart-box canvas { max-height: 280px; }
@@ -354,7 +354,6 @@ nav .spacer { flex: 1; }
    ================================================================== */
 
 #version-footer { position: fixed; bottom: 8px; right: 12px; font-size: 0.7rem; color: var(--text-muted); z-index: 10; pointer-events: none; }
-nav .logo { text-decoration: none; }
 
 a:focus-visible, button:focus-visible, input:focus-visible,
 [role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -428,7 +427,6 @@ a:focus-visible, button:focus-visible, input:focus-visible,
 
 /* --- Trends ------------------------------------------------------- */
 .chart-canvas-wrap { position: relative; height: 260px; }
-.chart-box { margin-bottom: 20px; }
 .chart-box .section-hint { margin-top: -8px; }
 .chart-missing { color: var(--yellow); font-size: 0.82rem; padding: 20px 0; }
 
@@ -467,14 +465,14 @@ a:focus-visible, button:focus-visible, input:focus-visible,
 .finding-group-name { font-weight: 600; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* --- Calendar ----------------------------------------------------- */
+/* 13 weeks in a wide container: the columns flex so the grid fills the space
+   and each cell stays a realistic tap target, instead of a 13px postage stamp
+   in the corner. --cal-cell keeps the day labels in step with the cells. */
 .calendar-heatmap {
   background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 20px; overflow-x: auto;
+  --cal-cell: 26px; --cal-gap: 4px;
 }
-/* 13 weeks in a wide container: let the columns flex so the grid fills the
-   space and each cell stays a realistic tap target, instead of a 13px
-   postage stamp in the corner. --cal-cell keeps the labels in step. */
-.calendar-heatmap { --cal-cell: 26px; --cal-gap: 4px; }
 /* Square cells: the contribution-graph convention, and a sane tap target.
    Width is capped so a flexed column cannot stretch them into rectangles. */
 .cal-grid { max-width: 460px; }

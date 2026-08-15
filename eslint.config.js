@@ -30,6 +30,7 @@ module.exports = [
         app: 'readonly',
         charts: 'writable',
         destroyCharts: 'readonly',
+        trackChart: 'readonly',
         api: 'readonly',
         esc: 'readonly',
         jsAttr: 'readonly',
