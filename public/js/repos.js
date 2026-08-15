@@ -1,14 +1,12 @@
 /* Patch command center — cross-repo Dependabot coverage, alerts and open PRs.
-   Depends on helpers defined in app.js ($, app, api, navigate, severityBadge). */
+   Depends on helpers defined in app.js ($, app, api, esc, relTime, navigate,
+   severityBadge, viewHeader). */
 
 let ghState = { repos: [], overview: null, status: null };
 let repoFilterKey = sessionStorage.getItem('ghFilter') || 'attention';
 let repoSort = sessionStorage.getItem('ghSort') || 'risk';
 let repoSearch = '';
 const expandedRepos = new Set();
-
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
 
 const FILTERS = [
   { key: 'attention', label: 'Needs attention' },
@@ -35,19 +33,6 @@ const ECOSYSTEM_BY_LANGUAGE = {
   java: 'maven', kotlin: 'gradle', 'c#': 'nuget', php: 'composer',
   swift: 'swift', dart: 'pub', elixir: 'hex', shell: null, dockerfile: 'docker'
 };
-
-function relTime(iso) {
-  if (!iso) return 'never';
-  const secs = Math.floor((Date.now() - Date.parse(iso)) / 1000);
-  if (Number.isNaN(secs)) return 'unknown';
-  if (secs < 60) return 'just now';
-  const units = [['m', 60], ['h', 3600], ['d', 86400], ['mo', 2592000], ['y', 31536000]];
-  let out = `${Math.floor(secs / 60)}m ago`;
-  for (const [suffix, size] of units) {
-    if (secs >= size) out = `${Math.floor(secs / size)}${suffix} ago`;
-  }
-  return out;
-}
 
 function ageTone(days, staleDays) {
   if (days == null) return 'red';
@@ -82,7 +67,10 @@ async function refreshGitHub(btn) {
       throw new Error(body.error || `Refresh failed (${response.status})`);
     }
     ghState.repos = [];
-    await renderPatch();
+    // Every view carries this button, so redraw whichever one is open —
+    // hardcoding renderPatch() here swapped the patch board's content in
+    // under the Trends/History/Calendar heading.
+    await route();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh failed'; }
     console.warn('refresh failed', e);
@@ -167,13 +155,19 @@ function renderKpis(s, staleDays) {
     }
   ];
 
-  return `<div class="kpi-row">${tiles.map(t => `
-    <div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}" onclick="${t.href ? `navigate('${t.href.slice(1)}')` : `setRepoFilterKey('${t.filter}')`}">
+  // Tiles act as filter buttons, so they carry the button role, a tab stop and
+  // Enter/Space by hand — a bare div is invisible to keyboard and screen readers.
+  return `<div class="kpi-row">${tiles.map(t => {
+    const action = t.href ? `navigate('${t.href.slice(1)}')` : `setRepoFilterKey('${t.filter}')`;
+    return `<div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}" role="button" tabindex="0"
+      aria-label="${esc(`${t.label}: ${t.value}. ${t.sub}`)}"
+      onclick="${action}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${action}}">
       <div class="kpi-label">${t.label}</div>
       <div class="kpi-value">${t.value}</div>
       <div class="kpi-sub">${t.sub}</div>
       ${t.bar || ''}
-    </div>`).join('')}</div>`;
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function renderControls() {
@@ -297,7 +291,7 @@ function renderRepoRow(r) {
   return `<div class="repo-row-wrap">
     <div class="repo-row ${open ? 'expanded' : ''}" role="button" tabindex="0"
       aria-expanded="${open}" aria-label="${esc(r.fullName)} details" data-repo="${esc(r.fullName)}"
-      onclick="toggleRepo('${esc(r.fullName)}')" onkeydown="repoRowKey(event, '${esc(r.fullName)}')">
+      onclick="toggleRepo('${jsAttr(r.fullName)}')" onkeydown="repoRowKey(event, '${jsAttr(r.fullName)}')">
       <span class="repo-name">
         <span class="expand-icon">${open ? '▾' : '▸'}</span>
         <span class="repo-title">${esc(r.name)}</span>
@@ -451,7 +445,6 @@ function renderSetupScreen() {
     </ol>
     <p class="muted">(Setting <code>GITHUB_TOKEN</code> in the environment still works too.)</p>
     <p><a href="#/settings" onclick="navigate('/settings');return false" class="refresh-btn" style="display:inline-block;text-decoration:none">Open Settings →</a></p>
-    <p><a href="#/audits" onclick="navigate('/audits');return false">Go to the nightly audit dashboard →</a></p>
   </div>`;
 }
 
@@ -504,45 +497,94 @@ async function renderCoverage() {
   try { state = await loadGitHub(); } catch (e) { showError('Could not load GitHub data', e.message); return; }
   if (!state.status.configured) { app.innerHTML = renderSetupScreen(); return; }
 
+  const staleDays = state.status.staleDays;
   const active = state.repos.filter(r => !r.archived);
   const missing = active.filter(r => !r.dependabot.configPresent);
   const alertsOff = active.filter(r => r.dependabot.alertsEnabled === false);
   const noAutoFix = active.filter(r => r.dependabot.securityUpdatesEnabled === false);
-  const stale = active.filter(r => r.lastScan.source === 'none' || (r.lastScan.ageDays ?? 0) > state.status.staleDays);
-  const covered = active.length - new Set([...missing, ...alertsOff].map(r => r.fullName)).size;
+  // Unknown scan age counts as stale, not fresh: `?? 0` once made a repo with no
+  // resolvable last-scan date read as scanned today.
+  const stale = active.filter(r => r.lastScan.source === 'none' || (r.lastScan.ageDays ?? Infinity) > staleDays);
+  // "Scanned" is the narrow claim this number can actually support: a config is
+  // present and alerts are on. Repos that additionally lack auto-fix or have a
+  // stale scan are counted here too, so the sections below still have work in them.
+  const scanned = active.length - new Set([...missing, ...alertsOff].map(r => r.fullName)).size;
+  const percent = active.length ? Math.round((scanned / active.length) * 100) : 0;
 
-  const section = (title, hint, repos, extra) => `
+  const groups = [
+    {
+      title: 'No dependabot.yml', repos: missing,
+      hint: 'These repos never get scheduled version-update PRs. Adding a config starts them.',
+      link: r => ({
+        href: `${r.url}/new/${encodeURIComponent(r.defaultBranch || 'main')}?filename=.github/dependabot.yml&value=${encodeURIComponent(suggestedConfig(r))}`,
+        label: 'add config'
+      })
+    },
+    {
+      title: 'Dependabot alerts disabled', repos: alertsOff,
+      hint: 'Vulnerabilities in these repos are invisible — nothing is scanning them at all.',
+      link: r => ({ href: `${r.url}/settings/security_analysis`, label: 'enable' })
+    },
+    {
+      title: 'Security updates off', repos: noAutoFix,
+      hint: 'Alerts are raised, but Dependabot will not open the fix PR by itself.',
+      link: r => ({ href: `${r.url}/settings/security_analysis`, label: 'enable' })
+    },
+    {
+      title: `No scan in ${staleDays}+ days`, repos: stale,
+      hint: 'Configured, but no recent evidence of a run. Check the schedule or the Dependabot job log.',
+      link: r => ({ href: `${r.url}/network/updates`, label: 'job log' })
+    }
+  ];
+
+  const totalGaps = groups.reduce((n, g) => n + g.repos.length, 0);
+  // null means "this token cannot read the setting" — the gap sections
+  // correctly exclude it, so the all-clear copy must not claim it is enabled.
+  const unknownAutofix = active.filter(r => r.dependabot.securityUpdatesEnabled == null).length;
+
+  const section = g => `
     <div class="section">
-      <h3>${title} <span class="count">${repos.length}</span></h3>
-      <p class="section-hint">${hint}</p>
-      ${repos.length ? `<div class="coverage-list">${repos.map(r => `
-        <div class="coverage-row">
+      <h3>${esc(g.title)} <span class="count ${g.repos.length ? 'count-warn' : 'count-ok'}">${g.repos.length}</span></h3>
+      <p class="section-hint">${esc(g.hint)}</p>
+      ${g.repos.length ? `<div class="coverage-list">${g.repos.map(r => {
+    const link = g.link(r);
+    return `<div class="coverage-row">
           <a href="${esc(r.url)}" target="_blank" rel="noopener" class="repo-title">${esc(r.fullName)}</a>
           ${r.language ? `<span class="chip chip-dim">${esc(r.language)}</span>` : ''}
           ${r.private ? '<span class="chip chip-dim">private</span>' : ''}
-          <span class="muted">pushed ${relTime(r.pushedAt)}</span>
-          <span class="muted">last scan ${relTime(r.lastScan.at)}</span>
-          ${extra ? extra(r) : ''}
-        </div>`).join('')}</div>`
-    : '<div class="muted">None — all good.</div>'}
+          <span class="muted">pushed ${esc(relTime(r.pushedAt))}</span>
+          <span class="muted">last scan ${esc(relTime(r.lastScan.at))}</span>
+          <span class="coverage-action tone-${esc(r.action.tone)}">${esc(r.action.text)}</span>
+          <a class="mini-link" href="${esc(link.href)}" target="_blank" rel="noopener">${esc(link.label)} ↗</a>
+        </div>`;
+  }).join('')}</div>`
+    : '<div class="all-clear">✓ None — every active repo is clear here.</div>'}
     </div>`;
 
   app.innerHTML = `
-    <div class="patch-header">
-      <div>
-        <h2 class="patch-title">Dependabot coverage</h2>
-        <div class="patch-sub">${covered}/${active.length} active repos fully covered · scanned ${relTime(state.status.fetchedAt)}</div>
+    ${viewHeader('Dependabot coverage', `${scanned}/${active.length} active repos are being scanned · ${totalGaps
+    ? plural(totalGaps, 'gap')  + ' to close' : 'no gaps'} · ${esc(relTime(state.status.fetchedAt))}`)}
+    <div class="coverage-hero">
+      <div class="coverage-meter" role="img" aria-label="${percent} percent of active repos are being scanned">
+        <div class="coverage-meter-fill tone-${percent >= 90 ? 'ok' : percent >= 60 ? 'warning' : 'critical'}" style="width:${percent}%"></div>
       </div>
-      <button class="refresh-btn" onclick="refreshGitHub(this)">↻ Rescan</button>
+      <div class="coverage-hero-meta">
+        <strong>${percent}% scanned</strong>
+        <span class="muted">a dependabot.yml is present and alerts are on. Auto-fix and scan freshness are counted
+          separately below${state.repos.length - active.length
+    ? `, and ${state.repos.length - active.length} archived repos are excluded` : ''}.</span>
+      </div>
     </div>
-    ${section('No dependabot.yml', 'These repos never get version-update PRs. Add a config to start receiving them.', missing,
-    r => `<a class="mini-link" href="${esc(r.url)}/new/${esc(r.defaultBranch || 'main')}?filename=.github/dependabot.yml&value=${encodeURIComponent(suggestedConfig(r))}" target="_blank" rel="noopener">add config ↗</a>`)}
-    ${section('Dependabot alerts disabled', 'Vulnerabilities in these repos are invisible — nothing is scanning them.', alertsOff,
-    r => `<a class="mini-link" href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">enable ↗</a>`)}
-    ${section('Security updates off', 'Alerts are on, but Dependabot will not open fix PRs automatically.', noAutoFix,
-    r => `<a class="mini-link" href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">enable ↗</a>`)}
-    ${section(`No scan in ${state.status.staleDays}+ days`, 'Configured, but nothing has run recently. Check the schedule or the Dependabot job log.', stale,
-    r => `<a class="mini-link" href="${esc(r.url)}/network/updates" target="_blank" rel="noopener">job log ↗</a>`)}`;
+    ${totalGaps === 0
+    ? `<div class="empty"><div class="icon">🎉</div><h3>No gaps to close</h3>
+       <p>All ${active.length} active repos have a Dependabot config, alerts enabled, and a scan within the last
+          ${staleDays} days.${unknownAutofix
+    ? ` Automatic security updates are confirmed on for ${active.length - unknownAutofix} of them — this token
+          cannot read the setting on the other ${unknownAutofix}, which is not the same as it being off.`
+    : ' Automatic security updates are on.'}</p>
+       <a class="refresh-btn" style="display:inline-block;text-decoration:none;margin-top:14px"
+          href="#/posture" onclick="navigate('/posture');return false">See the wider security posture →</a></div>`
+    : groups.map(section).join('')}`;
 }
 
 // === Settings view =======================================================

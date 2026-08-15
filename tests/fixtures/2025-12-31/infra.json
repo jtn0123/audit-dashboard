@@ -1,6 +1,0 @@
-{
-  "ci": { "repo1": { "successRate": 0.85 } },
-  "containers": [{ "name": "web", "state": "running" }],
-  "alerts": [],
-  "disk": {}
-}

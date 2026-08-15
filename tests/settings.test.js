@@ -67,8 +67,8 @@ before(async () => {
   delete process.env.GH_TOKEN;
   process.env.GITHUB_API_URL = `http://127.0.0.1:${gh.address().port}`;
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
+  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
   process.env.GH_AUTO_REFRESH = 'false';
-  process.env.DATA_DIR = path.join(__dirname, 'fixtures');
   process.env.PORT = '0';
 
   delete require.cache[require.resolve('../server.js')];

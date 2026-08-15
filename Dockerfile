@@ -6,9 +6,10 @@ RUN npm ci --omit=dev
 COPY . .
 ARG BUILD_DATE
 ENV BUILD_DATE=$BUILD_DATE
-ENV DATA_DIR=/data
-# Collector cache lives here; mount a volume to keep it warm across restarts
+# Collector cache and the scan-history series live here; mount a volume to keep
+# both warm across restarts — losing /cache resets the recorded trend history.
 ENV GH_CACHE_FILE=/cache/github.json
+ENV GH_HISTORY_FILE=/cache/history.json
 RUN mkdir -p /cache && chown node:node /cache
 USER node
 EXPOSE 3002

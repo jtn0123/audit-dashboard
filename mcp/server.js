@@ -115,6 +115,41 @@ const TOOLS = [
     description: 'Repos with scanning gaps: no dependabot.yml, alerts disabled, security updates off, stale or never-run scans — each with what to fix.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run: () => api('GET', '/api/gh/coverage')
+  },
+  {
+    name: 'get_security_posture',
+    description: 'Cross-repo scanning posture: Dependabot alerts/config/security-updates plus code scanning, secret scanning and push protection, per repo and rolled up. Wider than get_coverage_gaps, which is Dependabot only. Reports enabled, disabled and "unknown" as three distinct states — unknown means this token cannot read the setting and must never be reported as off.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: () => api('GET', '/api/gh/posture')
+  },
+  {
+    name: 'list_merges',
+    description: 'Recently merged pull requests across all repos — what actually got patched, with the package bump where the title carries one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'Look-back window; omit for everything collected (up to ~120 days)' },
+        kind: { type: 'string', description: 'dependabot | other | all (default all)' }
+      },
+      additionalProperties: false
+    },
+    run: ({ days, kind } = {}) => {
+      const q = new URLSearchParams();
+      if (days) q.set('days', String(days));
+      if (kind) q.set('kind', kind);
+      const qs = q.toString();
+      return api('GET', `/api/gh/merges${qs ? '?' + qs : ''}`);
+    }
+  },
+  {
+    name: 'get_trends',
+    description: 'Daily series for alert backlog and patch activity. Returns TWO sources that must not be conflated: `recorded` is the local per-scan snapshot history — exact, but only covers the time since this dashboard first ran; `derived` is reconstructed from the dates on currently-OPEN alerts and PRs, so it spans the whole window but is a FLOOR for past days, because anything already fixed left no trace to count. Never present a derived point as the true historical count.',
+    inputSchema: {
+      type: 'object',
+      properties: { days: { type: 'integer', description: 'Window length in days (default 90)' } },
+      additionalProperties: false
+    },
+    run: ({ days } = {}) => api('GET', `/api/gh/trends${days ? `?days=${days}` : ''}`)
   }
 ];
 

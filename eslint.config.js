@@ -24,19 +24,44 @@ module.exports = [
       globals: {
         ...globals.browser,
         Chart: 'readonly',
-        marked: 'readonly',
-        // Shared between app.js and repos.js (classic scripts, one global scope)
+        // Classic scripts share one global scope: app.js defines the helpers,
+        // repos.js and insights.js define the views the router dispatches to.
         $: 'readonly',
         app: 'readonly',
+        charts: 'writable',
+        destroyCharts: 'readonly',
         api: 'readonly',
+        esc: 'readonly',
+        jsAttr: 'readonly',
         navigate: 'readonly',
         showError: 'readonly',
+        showLoading: 'readonly',
         severityBadge: 'readonly',
+        severityRank: 'readonly',
         renderSeverityBar: 'readonly',
+        relTime: 'readonly',
+        shortDate: 'readonly',
+        plural: 'readonly',
+        viewHeader: 'readonly',
+        noteBanner: 'readonly',
+        route: 'readonly',
+        SEVERITY_ORDER: 'readonly',
+        CHART_COLORS: 'readonly',
+        CHART_BASE: 'readonly',
+        // repos.js
         renderPatch: 'readonly',
         renderPrs: 'readonly',
         renderCoverage: 'readonly',
         renderSettings: 'readonly',
+        renderSetupScreen: 'readonly',
+        refreshGitHub: 'readonly',
+        // insights.js
+        renderPosture: 'readonly',
+        renderTrends: 'readonly',
+        renderHistory: 'readonly',
+        renderFindings: 'readonly',
+        renderCalendar: 'readonly',
+        alertItem: 'readonly',
       },
     },
     rules: {
@@ -44,6 +69,7 @@ module.exports = [
     },
   },
   {
-    ignores: ['node_modules/'],
+    // public/vendor holds third-party builds committed verbatim — see its README.
+    ignores: ['node_modules/', 'public/vendor/'],
   },
 ];

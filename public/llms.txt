@@ -39,6 +39,20 @@ machine-readable work queue for agents.
 - GET /api/gh/prs?kind=dependabot|other|all — every open PR across repos.
 - GET /api/gh/alerts?severity=&repo= — open vulnerability alerts.
 - GET /api/gh/coverage — repos with scanning gaps and what to fix.
+- GET /api/gh/posture — cross-repo security posture: Dependabot, code scanning,
+  secret scanning and push protection per repo. enabled / disabled / unknown are
+  three distinct states — "unknown" means this token cannot read the setting and
+  must never be reported as "off".
+- GET /api/gh/merges?days=&kind= — recently merged PRs (what actually got patched).
+- GET /api/gh/trends?days= — daily series. TWO SOURCES, do not conflate them:
+  `recorded` is the local snapshot history, written once per scan, and is exact
+  but only covers the time since this dashboard first ran. `derived` is
+  reconstructed from the createdAt dates on currently-OPEN alerts and PRs, so it
+  covers the full window but is a FLOOR for past days — anything already fixed
+  is invisible to it. Never present a derived point as the true historical count.
+- GET /api/gh/history?days=&limit= — recorded scans, newest first, each with its
+  delta from the previous scan (alerts, PRs, coverage, and the repos that moved).
+- GET /api/gh/calendar?days= — per-day activity cells for the heatmap.
 - POST /api/gh/refresh — force a rescan; responds when the cache is fresh.
 - GET /api/digest.md — this data as a markdown morning briefing.
 - GET /api/settings — token status (source + masked tail only). POST
@@ -47,15 +61,13 @@ machine-readable work queue for agents.
   write-only: no endpoint ever returns a stored token.
 - GET /api/openapi.json — machine-readable spec of everything above.
 - GET /healthz — liveness. GET /health — health + version + integration state.
-- /api/dates, /api/summary, /api/report/:date[/:agent[/md]], /api/findings,
-  /api/diff/:d1/:d2?, /api/trends — nightly multi-agent audit reports
-  (separate subsystem; empty unless audit data is mounted).
 
 ## MCP
 
 mcp/server.js in the repo is a dependency-free stdio MCP server wrapping this
 API (tools: get_status, refresh_and_wait, list_actions, get_merge_plan,
-get_repo_posture, list_alerts, get_coverage_gaps). Point it here with
+get_repo_posture, list_alerts, get_coverage_gaps, get_security_posture,
+list_merges, get_trends). Point it here with
 PATCHBOARD_URL. The repo's .mcp.json registers it for Claude Code.
 
 ## Verdicts
