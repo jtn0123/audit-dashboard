@@ -5,6 +5,12 @@ services:
     # Local build pinned to the package version — never :latest
     image: audit-dashboard:2.1.0
     container_name: audit-dashboard
+    labels:
+      # This image is built locally from git, so it has no registry to pull
+      # from. Watchtower would otherwise retry it every 10 minutes forever and
+      # log a 401 against docker.io/library/audit-dashboard each time. Updates
+      # arrive through Portainer's GitOps polling of this repo instead.
+      - "com.centurylinklabs.watchtower.enable=false"
     ports:
       # 127.0.0.1 by default. To reach it from other LAN devices, set
       # HOST_BIND to this box's LAN address (e.g. 192.168.1.x).
