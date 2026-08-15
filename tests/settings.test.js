@@ -67,8 +67,8 @@ before(async () => {
   delete process.env.GH_TOKEN;
   process.env.GITHUB_API_URL = `http://127.0.0.1:${gh.address().port}`;
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
+  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
   process.env.GH_AUTO_REFRESH = 'false';
-  process.env.DATA_DIR = path.join(__dirname, 'fixtures');
   process.env.PORT = '0';
 
   delete require.cache[require.resolve('../server.js')];
@@ -84,8 +84,14 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
-  if (gh) gh.close();
+  // closeAllConnections is required, not tidy-up: Node's global fetch pools
+  // keep-alive sockets to the fake GitHub server, and plain close() waits on
+  // them forever, so the test process never exits and `node --test` hangs.
+  for (const s of [server, gh]) {
+    if (!s) continue;
+    s.closeAllConnections?.();
+    s.close();
+  }
   if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
 });
 

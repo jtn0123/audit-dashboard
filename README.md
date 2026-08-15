@@ -16,12 +16,32 @@ Runs on your own network. No data leaves the box except read-only calls to GitHu
 |------|-----------------|
 | **Patch board** (`/`) | One row per repo: Dependabot state, open alerts by severity, open PRs, last scan, and the single next action. Sorted by risk. |
 | **Pull requests** (`/#/prs`) | Every open PR across every repo — Dependabot updates and human PRs — with CI status and age. |
+| **Findings** (`/#/findings`) | Every open Dependabot alert across every repo, searchable and groupable by package — one package causing five alerts shows as one row. |
 | **Coverage** (`/#/coverage`) | Repos with no `dependabot.yml`, alerts disabled, security updates off, or a stale scan — each with a one-click fix link. |
-| **Audits** (`/#/audits`) | The original nightly multi-agent audit views (Trends, History, Findings, Calendar) — unchanged. |
+| **Posture** (`/#/posture`) | Wider than Dependabot: code scanning, secret scanning and push protection per repo. Distinguishes *off* from *not visible to this token*. |
+| **Trends** (`/#/trends`) | Alert backlog and patch activity over time. Is the backlog growing faster than you patch it? |
+| **History** (`/#/history`) | What actually got patched — merged pull requests by day — plus the log of every scan this dashboard has run. |
+| **Calendar** (`/#/calendar`) | 13-week heatmap of alerts raised, PRs opened and updates merged. Click a day for what happened. |
 
 Each repo row expands to show the actual advisories (package, severity, fixed version),
 the update PRs with their CI verdict, and — for repos with nothing configured — a
 ready-to-commit `dependabot.yml` with a link that opens GitHub's file editor pre-filled.
+
+### Where "history" comes from
+
+GitHub has no API for "how many alerts were open last Tuesday". Trends, History and
+Calendar therefore draw on two different sources, and the UI never blurs them:
+
+- **Recorded** — every completed scan appends a small snapshot to `GH_HISTORY_FILE` on
+  the cache volume. Exact, but it only covers the time since this dashboard first ran,
+  so it is empty on day one and gains a point per scan.
+- **Derived** — every open alert and PR carries the date it was raised, and merged
+  update PRs carry the date they landed, so the last 90 days can be reconstructed from
+  a single scan. Populated immediately, but it is a **floor** for past days: an alert
+  raised in May and fixed in June left nothing to count, so it never appears.
+
+Charts label which one they are showing. Nothing here writes to GitHub, and the
+snapshot file holds counts only — no credentials, no code.
 
 ## Quick start
 
@@ -73,9 +93,9 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_MAX_REPOS` | `300` | Safety cap |
 | `GH_AUTO_REFRESH` | `true` | `false` = only refresh via the Rescan button |
 | `GH_CACHE_FILE` | `.cache/github.json` | Warm cache + ETag store |
+| `GH_HISTORY_FILE` | next to the cache | Scan-snapshot series behind Trends / History / Calendar |
+| `GH_HISTORY_DAYS` | `180` | How long snapshots are kept (floor: 7) |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
-| `DATA_DIR` | `..` | Nightly audit reports (`YYYY-MM-DD/` dirs) for the Audits views |
-| `AUDIT_DATA_DIR` | *(empty named volume)* | Host path compose mounts read-only at `/data` (compose only), e.g. `./audits` |
 | `PORT` | `3002` | Server port |
 | `HOST_BIND` | `127.0.0.1` | Host interface compose binds the port to (compose only). Set to the box's LAN IP for LAN access; never a WAN-facing interface. |
 | `ALLOWED_ORIGINS` | — | Extra CORS origins for your LAN hostnames |
@@ -126,12 +146,16 @@ limit. Remaining quota is shown in the header.
 | `GET` | `/api/gh/prs` | All open PRs — `?kind=dependabot\|other\|all` |
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
+| `GET` | `/api/gh/posture` | Cross-repo scanning posture — on / off / not visible, kept distinct |
+| `GET` | `/api/gh/merges` | Recently merged PRs — `?days=`, `?kind=` |
+| `GET` | `/api/gh/trends` | Daily series — `?days=`. Both the recorded and derived sources (see below) |
+| `GET` | `/api/gh/history` | Recorded scans, newest first, each with its delta from the previous one |
+| `GET` | `/api/gh/calendar` | Per-day activity cells — `?days=` |
 | `GET` | `/api/gh/actions` | Agent-facing work queue: verdicts + literal `gh` commands, freshness-stamped |
 | `GET` | `/api/gh/merge-plan` | Conflict-aware merge ordering — serial "trains" from PR file overlap, parallel otherwise |
 | `POST` | `/api/gh/refresh` | Force a rescan now (blocks until the cache is fresh — refresh-then-read) |
 | `GET` | `/healthz` | Liveness probe (no I/O — wired into the compose healthcheck) |
 | `GET` | `/health` | Health + version + GitHub integration state |
-| `GET` | `/api/dates`, `/api/summary`, `/api/report/:date[/:agent[/md]]`, `/api/findings`, `/api/diff/:d1/:d2?`, `/api/trends` | Nightly audit data |
 
 Everything the UI reads is a plain JSON endpoint, so it's easy to wire into Home Assistant,
 a status page, or a cron job that pokes you on Slack.
@@ -140,7 +164,8 @@ a status page, or a cron job that pokes you on Slack.
 
 `mcp/server.js` is a dependency-free MCP server (stdio transport) that exposes the
 dashboard to AI agents as native tools: `get_status`, `refresh_and_wait`, `list_actions`,
-`get_merge_plan`, `get_repo_posture`, `list_alerts`, `get_coverage_gaps`. The repo's
+`get_merge_plan`, `get_repo_posture`, `list_alerts`, `get_coverage_gaps`,
+`get_security_posture`, `list_merges`, `get_trends`. The repo's
 `.mcp.json` registers it for Claude Code automatically — sessions opened in this project
 can pull the work queue and execute it with their own credentials.
 
@@ -162,15 +187,18 @@ edit → push → redeploy. Override the path with `PATCHBOARD_POLICY_FILE`.
 ## Architecture
 
 ```text
-├── server.js              # Express: audit-file API + /api/gh/* read models
+├── server.js              # Express: /api/gh/* read models over the collector cache
 ├── lib/
 │   ├── config.js          # Env parsing, repo include/exclude globs
 │   ├── github.js          # REST client — ETags, pagination, rate limits (no deps)
 │   ├── collector.js       # Background poller: discovers repos, fetches signals, caches
-│   └── posture.js         # Pure: gaps, risk score, last-scan resolution, rollups
+│   ├── posture.js         # Pure: gaps, risk score, last-scan resolution, rollups
+│   ├── history.js         # Local scan-snapshot series — the only record of "before"
+│   └── timeline.js        # Pure: day buckets for trends and the calendar heatmap
 ├── public/
-│   ├── js/app.js          # Audit views + router
-│   ├── js/repos.js        # Patch board, PR and coverage views
+│   ├── js/app.js          # Shared helpers, hash router, chart defaults
+│   ├── js/repos.js        # Patch board, PR, coverage and settings views
+│   ├── js/insights.js     # Posture, trends, history, findings, calendar views
 │   └── css/style.css
 └── tests/                 # node --test; the collector is tested against a fake GitHub
 ```

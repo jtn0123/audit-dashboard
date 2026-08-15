@@ -1,5 +1,0 @@
-{
-  "sites": {
-    "example.com": { "scores": { "performance": 80, "accessibility": 88 } }
-  }
-}

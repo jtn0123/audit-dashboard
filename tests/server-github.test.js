@@ -61,6 +61,13 @@ function fakeGitHubServer() {
       }
       if (rest.startsWith('/pulls')) {
         if (full !== 'me/covered') return send([]);
+        if (url.searchParams.get('state') === 'closed') {
+          return send([
+            { number: 5, title: 'build(deps): bump thing from 1.9.0 to 2.0.0', user: { login: 'dependabot[bot]' }, head: { ref: 'dependabot/npm_and_yarn/thing' }, merged_at: ago(4), html_url: 'https://github.com/me/covered/pull/5' },
+            { number: 6, title: 'A human change that landed', user: { login: 'me' }, head: { ref: 'feat' }, merged_at: ago(6), html_url: 'https://github.com/me/covered/pull/6' },
+            { number: 4, title: 'Closed without merging', user: { login: 'me' }, head: { ref: 'nope' }, merged_at: null, html_url: 'https://github.com/me/covered/pull/4' }
+          ]);
+        }
         return send([
           { number: 7, title: 'build(deps): bump thing from 2.0.0 to 2.0.1', user: { login: 'dependabot[bot]' }, head: { ref: 'dependabot/npm_and_yarn/thing', sha: 'sha7' }, base: { ref: 'main' }, created_at: ago(3), updated_at: ago(1), html_url: 'https://github.com/me/covered/pull/7', labels: [] },
           { number: 8, title: 'A human change', user: { login: 'me' }, head: { ref: 'feat', sha: 'sha8' }, base: { ref: 'main' }, created_at: ago(2), updated_at: ago(1), html_url: 'https://github.com/me/covered/pull/8', labels: [] }
@@ -96,8 +103,8 @@ before(async () => {
   process.env.GITHUB_TOKEN = 'test-token';
   process.env.GITHUB_API_URL = `http://127.0.0.1:${gh.address().port}`;
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
+  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
   process.env.GH_AUTO_REFRESH = 'false';
-  process.env.DATA_DIR = path.join(__dirname, 'fixtures');
   process.env.PORT = '0';
 
   const express = require('express');
@@ -119,8 +126,14 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
-  if (gh) gh.close();
+  // closeAllConnections is required, not tidy-up: Node's global fetch pools
+  // keep-alive sockets to the fake GitHub server, and plain close() waits on
+  // them forever, so the test process never exits and `node --test` hangs.
+  for (const s of [server, gh]) {
+    if (!s) continue;
+    s.closeAllConnections?.();
+    s.close();
+  }
   if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
 });
 
@@ -255,5 +268,82 @@ describe('GitHub API tests (configured)', () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
     assert.equal(r.json.github.repoCount, 2);
+  });
+});
+
+describe('GitHub insight endpoints (configured)', () => {
+  it('GET /api/gh/posture separates enabled, disabled and unreadable settings', async () => {
+    const r = await request(port, '/api/gh/posture');
+    assert.equal(r.status, 200);
+    const f = r.json.features;
+    assert.deepEqual(f.dependabotConfig.enabled, ['me/covered']);
+    assert.deepEqual(f.dependabotConfig.disabled, ['me/naked']);
+    assert.deepEqual(f.dependabotAlerts.disabled, ['me/naked'], 'a 403 saying "disabled" is disabled');
+    // me/naked has no security_and_analysis payload, so the flag is unreadable —
+    // which must never be reported as "off".
+    assert.deepEqual(f.securityUpdates.enabled, ['me/covered']);
+    assert.deepEqual(f.securityUpdates.unknown, ['me/naked']);
+    assert.equal(r.json.activeCount, 2);
+    assert.ok(r.json.gaps.some(g => g.id === 'alerts-disabled'));
+  });
+
+  it('GET /api/gh/merges returns merged PRs only, newest first, with the bump parsed', async () => {
+    const r = await request(port, '/api/gh/merges');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.map(m => m.number), [5, 6], 'PR 4 was closed without merging');
+    assert.equal(r.json[0].kind, 'dependabot');
+    assert.equal(r.json[0].bump.package, 'thing');
+    assert.equal(r.json[0].bump.to, '2.0.0');
+  });
+
+  it('GET /api/gh/merges filters by kind', async () => {
+    const bots = await request(port, '/api/gh/merges?kind=dependabot');
+    assert.deepEqual(bots.json.map(m => m.number), [5]);
+    const humans = await request(port, '/api/gh/merges?kind=other');
+    assert.deepEqual(humans.json.map(m => m.number), [6]);
+  });
+
+  it('GET /api/gh/trends counts human merges apart from dependency ones', async () => {
+    const r = await request(port, '/api/gh/trends?days=30');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.derived.totals.merges, 1, 'dependency PRs');
+    assert.equal(r.json.derived.totals.otherMerges, 1, 'human PRs, counted but not conflated');
+    assert.equal(r.json.derived.days.length, 30);
+    // One open critical alert raised inside the window.
+    assert.equal(r.json.derived.backlogChange, 1);
+    assert.equal(r.json.derived.backlog.critical.at(-1), 1);
+    assert.ok(r.json.mergeCoverage, 'the truncation caveat travels with the data');
+    assert.deepEqual(r.json.mergeCoverage.truncatedRepos, []);
+  });
+
+  it('GET /api/gh/trends records the scan it just ran', async () => {
+    const r = await request(port, '/api/gh/trends');
+    assert.equal(r.json.recorded.meta.count, r.json.recorded.snapshots.length,
+      'the plotted series must agree with the count reported beside it');
+    assert.equal(r.json.recorded.snapshots.length, 1);
+    assert.equal(r.json.recorded.snapshots[0].alerts.critical, 1);
+  });
+
+  it('GET /api/gh/history returns scans newest-first, oldest without a delta', async () => {
+    const r = await request(port, '/api/gh/history');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.snapshots.length, 1);
+    assert.equal(r.json.snapshots[0].delta, null, 'nothing to compare the first scan against');
+    assert.equal(r.json.snapshots[0].repoCount, 2);
+  });
+
+  it('GET /api/gh/calendar buckets activity by day', async () => {
+    const r = await request(port, '/api/gh/calendar?days=30');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.cells.length, 30);
+    const totals = r.json.cells.reduce((acc, c) => ({
+      raised: acc.raised + c.raised, merges: acc.merges + c.merges, other: acc.other + c.otherMerges
+    }), { raised: 0, merges: 0, other: 0 });
+    assert.equal(totals.raised, 1);
+    assert.equal(totals.merges, 1);
+    assert.equal(totals.other, 1);
+    const day = r.json.cells.find(c => c.raised);
+    assert.equal(day.critical, 1);
+    assert.equal(day.alerts[0].package, 'thing');
   });
 });

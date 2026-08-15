@@ -11,19 +11,15 @@ services:
       # Never bind 0.0.0.0 on a WAN-facing interface.
       - "${HOST_BIND:-127.0.0.1}:${PORT:-3002}:${PORT:-3002}"
     volumes:
-      # Nightly audit reports (optional — only the Audits/Trends views use these).
-      # Defaults to an empty named volume; point AUDIT_DATA_DIR at a host path
-      # (e.g. ./audits) to feed it real reports.
-      - ${AUDIT_DATA_DIR:-audit-data}:/data:ro
-      # Warm cache: repo data + ETags survive restarts, so a restart costs
-      # almost nothing against the GitHub rate limit
+      # Warm cache: repo data, ETags and the scan-history series survive
+      # restarts, so a restart costs almost nothing against the GitHub rate
+      # limit — and the Trends/History/Calendar series is not lost.
       - gh-cache:/cache
     environment:
       # Values interpolate from the shell env, a local .env file, or stack env
       # vars (Portainer). No env_file: .env is gitignored, so a git-sourced
       # deploy would fail on a missing file. Empty values fall back to the
       # app's own defaults (lib/config.js).
-      - DATA_DIR=/data
       - PORT=${PORT:-3002}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GH_OWNERS=${GH_OWNERS:-}
@@ -38,6 +34,8 @@ services:
       - GH_MAX_REPOS=${GH_MAX_REPOS:-}
       - GH_AUTO_REFRESH=${GH_AUTO_REFRESH:-}
       - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
+      - GH_HISTORY_FILE=${GH_HISTORY_FILE:-/cache/history.json}
+      - GH_HISTORY_DAYS=${GH_HISTORY_DAYS:-}
       - GITHUB_API_URL=${GITHUB_API_URL:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     restart: unless-stopped
@@ -64,4 +62,3 @@ services:
 
 volumes:
   gh-cache:
-  audit-data:

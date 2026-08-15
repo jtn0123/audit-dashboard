@@ -1,12 +1,9 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
 const http = require('node:http');
 
-const FIXTURES = path.join(__dirname, 'fixtures');
-process.env.DATA_DIR = FIXTURES;
 process.env.PORT = '0';
-// Keep the GitHub collector inert: these tests cover the audit-file API only.
+// Keep the GitHub collector inert: these tests cover routing and degraded states.
 delete process.env.GITHUB_TOKEN;
 delete process.env.GH_TOKEN;
 process.env.GH_AUTO_REFRESH = 'false';
@@ -61,7 +58,10 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
+  if (!server) return;
+  // Keep-alive sockets outlive close(); without this the process never exits.
+  server.closeAllConnections?.();
+  server.close();
 });
 
 describe('API tests', () => {
@@ -90,95 +90,50 @@ describe('API tests', () => {
     assert.match(r.body, /refresh-then-read/);
   });
 
-  it('GET /api/dates returns array of date strings', async () => {
-    const r = await getJSON(port, '/api/dates');
+  it('the removed audit endpoints answer 404 JSON, not the SPA shell', async () => {
+    for (const p of ['/api/dates', '/api/summary', '/api/findings', '/api/trends', '/api/report/2026-01-01']) {
+      const r = await getJSON(port, p);
+      assert.equal(r.status, 404, `${p} should be 404`);
+      assert.match(r.json.error, /No such endpoint/);
+    }
+  });
+
+  it('unknown /api paths never serve HTML', async () => {
+    // The SPA catch-all used to swallow these, so a mistyped or removed
+    // endpoint answered 200 text/html and looked like a success.
+    for (const p of ['/api/nope', '/api/gh/nope', '/api/gh/alerts/extra']) {
+      const r = await get(port, p);
+      assert.equal(r.status, 404, `${p} should be 404`);
+      assert.ok(r.headers['content-type'].includes('json'), `${p} should answer JSON`);
+    }
+  });
+
+  it('path-traversal attempts cannot read files off disk', async () => {
+    const payloads = [
+      '/api/report/..%2f..%2f..%2f..%2fpackage',
+      '/api/report/2026-01-01/../../../package',
+      '/../server.js',
+      '/..%2fserver.js',
+      '/vendor/../../lib/settings.js',
+      '/js/../../.env'
+    ];
+    for (const p of payloads) {
+      const r = await get(port, p);
+      assert.ok(!/GITHUB_TOKEN|githubToken|require\(|"dependencies"/.test(r.body),
+        `${p} leaked file contents`);
+    }
+  });
+
+  it('GET /health reports collector state instead of audit files', async () => {
+    const r = await getJSON(port, '/health');
     assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.json));
-    assert.ok(r.json.includes('2026-01-01'));
+    assert.equal(typeof r.json.alerts.total, 'number');
+    assert.equal(typeof r.json.openPrs, 'number');
+    assert.ok('coveragePercent' in r.json);
+    assert.equal(typeof r.json.history.count, 'number');
+    assert.ok(!('lastAuditDate' in r.json), 'audit-era fields should be gone');
   });
 
-  it('GET /api/report/:date returns array of normalized reports', async () => {
-    const r = await getJSON(port, '/api/report/2026-01-01');
-    assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.json));
-    assert.ok(r.json.length >= 3);
-  });
-
-  it('GET /api/report/:date/:agent returns single normalized report', async () => {
-    const r = await getJSON(port, '/api/report/2026-01-01/security');
-    assert.equal(r.status, 200);
-    assert.equal(r.json.agent, 'security');
-    assert.ok(['ok', 'warning', 'critical'].includes(r.json.status));
-    assert.equal(typeof r.json.score, 'number');
-  });
-
-  it('GET /api/report/:date/:agent/md returns text content', async () => {
-    const r = await get(port, '/api/report/2026-01-01/security/md');
-    assert.equal(r.status, 200);
-    assert.ok(r.body.includes('Security Report'));
-  });
-
-  it('GET /api/report/9999-01-01 returns 404', async () => {
-    const r = await get(port, '/api/report/9999-01-01');
-    assert.equal(r.status, 404);
-  });
-
-  it('GET /api/report/:date/nonexistent returns 404', async () => {
-    const r = await get(port, '/api/report/2026-01-01/nonexistent');
-    assert.equal(r.status, 404);
-  });
-
-  it('GET /api/trends returns object with dates and data keys', async () => {
-    const r = await getJSON(port, '/api/trends');
-    assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.json.dates));
-    assert.equal(typeof r.json.data, 'object');
-  });
-
-  it('Normalization: security report has findings array', async () => {
-    const r = await getJSON(port, '/api/report/2026-01-01/security');
-    assert.ok(Array.isArray(r.json.findings));
-    assert.ok(r.json.findings.length > 0);
-  });
-
-  it('Normalization: infra report has numeric score', async () => {
-    const r = await getJSON(port, '/api/report/2026-01-01/infra');
-    assert.equal(typeof r.json.score, 'number');
-  });
-
-  it('GET /api/findings returns array of finding objects', async () => {
-    const r = await getJSON(port, '/api/findings');
-    assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.json));
-    assert.ok(r.json.length > 0);
-    const f = r.json[0];
-    assert.ok(f.title);
-    assert.ok(f.severity);
-    assert.ok(f.firstSeen);
-    assert.ok(f.lastSeen);
-    assert.ok(typeof f.occurrences === 'number');
-    assert.ok(['new', 'recurring', 'resolved'].includes(f.status));
-  });
-
-  it('GET /api/findings deduplicates by title', async () => {
-    const r = await getJSON(port, '/api/findings');
-    const titles = r.json.map(f => f.title.toLowerCase());
-    const unique = new Set(titles);
-    assert.equal(titles.length, unique.size);
-  });
-
-  it('GET /api/findings marks resolved findings correctly', async () => {
-    const r = await getJSON(port, '/api/findings');
-    // CSRF vulnerability is only in 2025-12-31, not 2026-01-01 (latest), so should be resolved
-    const csrf = r.json.find(f => f.title.toLowerCase().includes('csrf'));
-    if (csrf) assert.equal(csrf.status, 'resolved');
-  });
-
-  it('Normalization: lighthouse handles dict-style sites', async () => {
-    const r = await getJSON(port, '/api/report/2026-01-01/lighthouse');
-    assert.equal(typeof r.json.sites, 'object');
-    assert.ok(r.json.sites['example.com']);
-  });
 });
 
 describe('GitHub API tests (unconfigured)', () => {
@@ -195,7 +150,8 @@ describe('GitHub API tests (unconfigured)', () => {
   });
 
   it('data endpoints return 503 with a setup hint when unconfigured', async () => {
-    for (const p of ['/api/gh/repos', '/api/gh/overview', '/api/gh/prs', '/api/gh/alerts', '/api/gh/coverage']) {
+    for (const p of ['/api/gh/repos', '/api/gh/overview', '/api/gh/prs', '/api/gh/alerts', '/api/gh/coverage',
+      '/api/gh/posture', '/api/gh/trends', '/api/gh/history', '/api/gh/calendar', '/api/gh/merges']) {
       const r = await getJSON(port, p);
       assert.equal(r.status, 503, `${p} should be 503`);
       assert.match(r.json.hint, /GITHUB_TOKEN/);
@@ -232,6 +188,22 @@ describe('Static file tests', () => {
     const r = await get(port, '/js/app.js');
     assert.equal(r.status, 200);
     assert.ok(r.headers['content-type'].includes('javascript'));
+  });
+
+  it('GET /js/insights.js serves the posture/trends/history/findings/calendar views', async () => {
+    const r = await get(port, '/js/insights.js');
+    assert.equal(r.status, 200);
+    for (const fn of ['renderPosture', 'renderTrends', 'renderHistory', 'renderFindings', 'renderCalendar']) {
+      assert.ok(r.body.includes(`function ${fn}`), `${fn} should be defined`);
+    }
+  });
+
+  it('index.html wires all three scripts and no dead audit nav', async () => {
+    const r = await get(port, '/');
+    for (const src of ['/js/app.js', '/js/repos.js', '/js/insights.js']) {
+      assert.ok(r.body.includes(src), `${src} should be loaded`);
+    }
+    assert.ok(!r.body.includes('navigate(\'/audits\')'), 'audits nav link should be gone');
   });
 
   it('GET /favicon.svg returns SVG', async () => {
