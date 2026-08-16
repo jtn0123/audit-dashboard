@@ -4,6 +4,13 @@ services:
       context: .
     # Local build pinned to the package version — never :latest
     image: audit-dashboard:2.1.0
+    # This image only ever exists locally, so a `compose pull` for it resolves to
+    # docker.io/library/audit-dashboard and 401s. Portainer's scheduled GitOps
+    # redeploy pulls before it brings the stack up, so that 401 aborted every
+    # automatic deploy — the stack sat four commits behind for four days without
+    # surfacing an error anywhere the UI shows. `build` tells Compose to build
+    # this service instead of pulling it.
+    pull_policy: build
     container_name: audit-dashboard
     labels:
       # This image is built locally from git, so it has no registry to pull
