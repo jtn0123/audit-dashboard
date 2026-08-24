@@ -54,7 +54,7 @@ Open `http://localhost:3002`. The first scan runs at startup and takes a few sec
 
 The container is hardened by default: digest-pinned base image, non-root user, read-only
 root filesystem (tmpfs `/tmp`, named volume for the cache), all capabilities dropped,
-`no-new-privileges`, a `/healthz` healthcheck, a 256 MB memory cap, and log rotation
+`no-new-privileges`, a `/healthz` healthcheck, a 512 MB memory cap, and log rotation
 (json-file, 10 MB × 3). The port binds to `127.0.0.1` unless you set `HOST_BIND`.
 
 ### The token

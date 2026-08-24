@@ -12,3 +12,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # github/codeql-action ships as four separate sub-actions - init,
+    # autobuild, analyze and upload-sarif - and CodeQL fails unless every
+    # step in a workflow is on the same version. One PR per sub-action can
+    # therefore never go green. Group them so the family moves together.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
