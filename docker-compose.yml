@@ -33,6 +33,11 @@ services:
       # vars (Portainer). No env_file: .env is gitignored, so a git-sourced
       # deploy would fail on a missing file. Empty values fall back to the
       # app's own defaults (lib/config.js).
+      # V8 sizes its heap from *host* memory, not the cgroup, so on a big box
+      # it will happily grow past mem_limit and take a SIGKILL instead of
+      # running a full GC. Cap the old space below the limit so it collects
+      # first. Keep this comfortably under mem_limit — RSS is heap + ~60 MB.
+      - NODE_OPTIONS=--max-old-space-size=384
       - PORT=${PORT:-3002}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GH_OWNERS=${GH_OWNERS:-}
@@ -70,7 +75,12 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-    mem_limit: 256m
+    # 256m OOM-killed this container on every startup scan: it idles around
+    # 230 MB but peaks near 350 MB while the collector holds all repos, their
+    # PRs and per-PR check runs in memory before the cache write. The cgroup
+    # killed it 3,109 times before anyone noticed. 512m clears the observed
+    # peak with room to spare.
+    mem_limit: 512m
     pids_limit: 128
 
 volumes:
