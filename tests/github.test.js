@@ -136,6 +136,18 @@ describe('posture', () => {
     assert.equal(posture.parseBumpTitle('Add a feature'), null);
   });
 
+  it('parses the "update X requirement" title shape too', () => {
+    // Dependabot uses this form for pip constraint files. It previously did not
+    // match, so every such PR carried bump: null and was reported as an
+    // unparseable bump needing a human.
+    assert.deepEqual(
+      posture.parseBumpTitle('chore(deps): update fakeredis requirement from >=2.37.0 to >=2.37.1'),
+      { package: 'fakeredis', from: '>=2.37.0', to: '>=2.37.1' });
+    assert.deepEqual(
+      posture.parseBumpTitle('chore(deps): update pytest requirement from <10,>=8 to >=9.1.1'),
+      { package: 'pytest', from: '<10,>=8', to: '>=9.1.1' });
+  });
+
   it('picks the freshest scan signal and names its source', () => {
     const scan = posture.resolveLastScan({
       dependabotRunAt: ago(10),

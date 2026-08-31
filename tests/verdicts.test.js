@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { semverBumpType, bumpEcosystem, prVerdict, buildActionQueue } = require('../lib/verdicts');
+const { semverBumpType, lowerBoundOf, bumpEcosystem, prVerdict, buildActionQueue } = require('../lib/verdicts');
 
 const DAY = 86_400_000;
 const ago = d => new Date(Date.now() - d * DAY).toISOString();
@@ -35,6 +35,36 @@ describe('semverBumpType', () => {
   it('refuses to guess on non-numeric versions', () => {
     assert.equal(semverBumpType('deadbeef', 'cafef00d'), 'unknown');
     assert.equal(semverBumpType(undefined, '1.0.0'), 'unknown');
+  });
+
+  it('classifies pip requirement specifiers by their lower bound', () => {
+    // "update X requirement from A to B" titles carry specifiers, not versions.
+    assert.equal(semverBumpType('>=2.37.0', '>=2.37.1'), 'patch');
+    assert.equal(semverBumpType('<2.0,>=1.9.2', '>=1.9.3,<2.0'), 'patch');
+    assert.equal(semverBumpType('<7,>=6.6', '>=6.11.1'), 'minor');
+    assert.equal(semverBumpType('<10,>=8', '>=9.1.1'), 'major');
+  });
+
+  it('stays unknown when a specifier has no lower bound to compare', () => {
+    // An upper-bound-only change has no semver level; guessing would be worse
+    // than admitting it.
+    assert.equal(semverBumpType('<5', '>=4.9,<5'), 'unknown');
+  });
+});
+
+describe('lowerBoundOf', () => {
+  it('picks the floor out of a comma-joined specifier', () => {
+    assert.equal(lowerBoundOf('>=2.37.0'), '2.37.0');
+    assert.equal(lowerBoundOf('<2.0,>=1.9.2'), '1.9.2');
+    assert.equal(lowerBoundOf('~=1.4.2'), '1.4.2');
+  });
+  it('treats a bare version as its own lower bound', () => {
+    assert.equal(lowerBoundOf('4.21.0'), '4.21.0');
+  });
+  it('returns null when there is no lower bound at all', () => {
+    assert.equal(lowerBoundOf('<5'), null);
+    assert.equal(lowerBoundOf('deadbeef'), null);
+    assert.equal(lowerBoundOf(''), null);
   });
 });
 
