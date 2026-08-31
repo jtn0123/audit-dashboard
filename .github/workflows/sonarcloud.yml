@@ -29,6 +29,15 @@ jobs:
       # Sonar reads coverage/lcov.info; without this the quality gate sees 0%
       - run: mkdir -p coverage && npm run test:coverage
       - name: SonarCloud Scan
+        # continue-on-error sits on the STEP, not the job. On a job it stops the
+        # workflow failing but the check still reports red -- landing-page has
+        # had it at job level for weeks and still shows a red `sonarqube`. On a
+        # step, the step fails, the job concludes success, and the check is green.
+        #
+        # This exists because the scan depends on a credential that can expire
+        # without anyone noticing: a code-quality report should never be able to
+        # block a merge on its own. Findings still appear on sonarcloud.io.
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
