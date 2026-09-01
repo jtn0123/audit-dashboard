@@ -45,7 +45,13 @@ services:
       - GH_REPOS_EXCLUDE=${GH_REPOS_EXCLUDE:-}
       - GH_INCLUDE_ARCHIVED=${GH_INCLUDE_ARCHIVED:-}
       - GH_INCLUDE_FORKS=${GH_INCLUDE_FORKS:-}
-      - GH_INCLUDE_PRIVATE=${GH_INCLUDE_PRIVATE:-}
+      # Private repos are excluded from this deployment. They cannot run CI on
+      # the free plan once the 2,000 private Actions minutes/month are spent, so
+      # their PRs sit on the board as permanently unactionable noise -- their
+      # jobs are refused outright with "recent account payments have failed or
+      # your spending limit needs to be increased" and never start at all.
+      # Set GH_INCLUDE_PRIVATE=true in the stack env to bring them back.
+      - GH_INCLUDE_PRIVATE=${GH_INCLUDE_PRIVATE:-false}
       - GH_REFRESH_MINUTES=${GH_REFRESH_MINUTES:-}
       - GH_STALE_DAYS=${GH_STALE_DAYS:-}
       - GH_CONCURRENCY=${GH_CONCURRENCY:-}
