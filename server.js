@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const path = require('path');
 
 const { loadConfig } = require('./lib/config');
@@ -302,7 +303,15 @@ app.all(/^\/api(?:\/.*)?$/, (req, res) => {
   res.status(404).json({ error: `No such endpoint: ${req.method} ${req.path}`, hint: 'See /api/openapi.json' });
 });
 
-app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// Bound repeated disk-backed SPA fallbacks without throttling API polling,
+// static assets, or health checks. Do not trust caller-supplied proxy headers.
+const spaLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-6',
+  legacyHeaders: false
+});
+app.get(/.*/, spaLimiter, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (ghConfig.enabled) {
   console.log(`GitHub integration enabled — refreshing every ${ghConfig.refreshMinutes}m` +

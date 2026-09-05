@@ -220,4 +220,21 @@ describe('Static file tests', () => {
     assert.equal(r.status, 200);
     assert.ok(r.body.includes('<svg') || r.body.includes('svg'));
   });
+
+  it('bounds repeated SPA fallbacks without blocking health or API responses', async () => {
+    const first = await get(port, '/rate-limit-probe');
+    assert.equal(first.status, 200);
+    assert.equal(first.headers['ratelimit-limit'], '60');
+    const remaining = Number(first.headers['ratelimit-remaining']);
+    assert.ok(Number.isInteger(remaining) && remaining >= 0);
+    for (let i = 0; i < remaining; i++) {
+      assert.equal((await get(port, '/rate-limit-probe')).status, 200);
+    }
+    const blocked = await get(port, '/rate-limit-probe');
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers['retry-after']) > 0);
+    assert.equal((await get(port, '/healthz')).status, 200);
+    assert.equal((await get(port, '/api/gh/status')).status, 200);
+    assert.equal((await get(port, '/api/nope')).status, 404);
+  });
 });
