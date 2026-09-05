@@ -101,7 +101,7 @@ describe('API tests', () => {
   it('unknown /api paths never serve HTML', async () => {
     // The SPA catch-all used to swallow these, so a mistyped or removed
     // endpoint answered 200 text/html and looked like a success.
-    for (const p of ['/api/nope', '/api/gh/nope', '/api/gh/alerts/extra']) {
+    for (const p of ['/api', '/api/', '/api/nope', '/api/gh/nope', '/api/gh/alerts/extra']) {
       const r = await get(port, p);
       assert.equal(r.status, 404, `${p} should be 404`);
       assert.ok(r.headers['content-type'].includes('json'), `${p} should answer JSON`);
@@ -165,6 +165,15 @@ describe('GitHub API tests (unconfigured)', () => {
 });
 
 describe('Static file tests', () => {
+  it('serves the SPA for nested non-API routes', async () => {
+    for (const p of ['/repos/example/details', '/apiary']) {
+      const r = await get(port, p);
+      assert.equal(r.status, 200);
+      assert.ok(r.headers['content-type'].includes('html'));
+      assert.ok(r.body.includes('app.js'));
+    }
+  });
+
   it('GET / returns HTML containing app.js', async () => {
     const r = await get(port, '/');
     assert.equal(r.status, 200);
@@ -210,5 +219,22 @@ describe('Static file tests', () => {
     const r = await get(port, '/favicon.svg');
     assert.equal(r.status, 200);
     assert.ok(r.body.includes('<svg') || r.body.includes('svg'));
+  });
+
+  it('bounds repeated SPA fallbacks without blocking health or API responses', async () => {
+    const first = await get(port, '/rate-limit-probe');
+    assert.equal(first.status, 200);
+    assert.equal(first.headers['ratelimit-limit'], '60');
+    const remaining = Number(first.headers['ratelimit-remaining']);
+    assert.ok(Number.isInteger(remaining) && remaining >= 0);
+    for (let i = 0; i < remaining; i++) {
+      assert.equal((await get(port, '/rate-limit-probe')).status, 200);
+    }
+    const blocked = await get(port, '/rate-limit-probe');
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers['retry-after']) > 0);
+    assert.equal((await get(port, '/healthz')).status, 200);
+    assert.equal((await get(port, '/api/gh/status')).status, 200);
+    assert.equal((await get(port, '/api/nope')).status, 404);
   });
 });

@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const path = require('path');
 
 const { loadConfig } = require('./lib/config');
@@ -298,11 +299,19 @@ app.post('/api/gh/refresh', requireGitHub, async (req, res) => {
 // An unknown /api/* path is a client error, not a page. Without this the SPA
 // catch-all below answers 200 text/html, so a mistyped or removed endpoint
 // looks like a success to anything expecting JSON.
-app.all('/api/*', (req, res) => {
+app.all(/^\/api(?:\/.*)?$/, (req, res) => {
   res.status(404).json({ error: `No such endpoint: ${req.method} ${req.path}`, hint: 'See /api/openapi.json' });
 });
 
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// Bound repeated disk-backed SPA fallbacks without throttling API polling,
+// static assets, or health checks. Do not trust caller-supplied proxy headers.
+const spaLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-6',
+  legacyHeaders: false
+});
+app.get(/.*/, spaLimiter, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (ghConfig.enabled) {
   console.log(`GitHub integration enabled — refreshing every ${ghConfig.refreshMinutes}m` +
