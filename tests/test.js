@@ -101,7 +101,7 @@ describe('API tests', () => {
   it('unknown /api paths never serve HTML', async () => {
     // The SPA catch-all used to swallow these, so a mistyped or removed
     // endpoint answered 200 text/html and looked like a success.
-    for (const p of ['/api/nope', '/api/gh/nope', '/api/gh/alerts/extra']) {
+    for (const p of ['/api', '/api/', '/api/nope', '/api/gh/nope', '/api/gh/alerts/extra']) {
       const r = await get(port, p);
       assert.equal(r.status, 404, `${p} should be 404`);
       assert.ok(r.headers['content-type'].includes('json'), `${p} should answer JSON`);
@@ -165,6 +165,15 @@ describe('GitHub API tests (unconfigured)', () => {
 });
 
 describe('Static file tests', () => {
+  it('serves the SPA for nested non-API routes', async () => {
+    for (const p of ['/repos/example/details', '/apiary']) {
+      const r = await get(port, p);
+      assert.equal(r.status, 200);
+      assert.ok(r.headers['content-type'].includes('html'));
+      assert.ok(r.body.includes('app.js'));
+    }
+  });
+
   it('GET / returns HTML containing app.js', async () => {
     const r = await get(port, '/');
     assert.equal(r.status, 200);
