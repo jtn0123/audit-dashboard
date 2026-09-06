@@ -7,15 +7,8 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 
-const crypto = require('node:crypto');
-
 const DAY = 86_400_000;
 const ago = d => new Date(Date.now() - d * DAY).toISOString();
-// Generated per run rather than written down: the test only needs the server
-// and the signing helper to agree, and a literal here is indistinguishable
-// from a checked-in credential to a secret scanner.
-const WEBHOOK_SECRET = crypto.randomBytes(16).toString('hex');
-const sign = body => `sha256=${crypto.createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')}`;
 
 const REPOS = [
   {
@@ -63,8 +56,18 @@ function fakeGitHubServer() {
           created_at: ago(5), updated_at: ago(1)
         }]);
       }
+      if (/^\/pulls\/\d+\/files/.test(rest)) {
+        return send([{ filename: 'package.json' }, { filename: 'package-lock.json' }]);
+      }
       if (rest.startsWith('/pulls')) {
         if (full !== 'me/covered') return send([]);
+        if (url.searchParams.get('state') === 'closed') {
+          return send([
+            { number: 5, title: 'build(deps): bump thing from 1.9.0 to 2.0.0', user: { login: 'dependabot[bot]' }, head: { ref: 'dependabot/npm_and_yarn/thing' }, merged_at: ago(4), html_url: 'https://github.com/me/covered/pull/5' },
+            { number: 6, title: 'A human change that landed', user: { login: 'me' }, head: { ref: 'feat' }, merged_at: ago(6), html_url: 'https://github.com/me/covered/pull/6' },
+            { number: 4, title: 'Closed without merging', user: { login: 'me' }, head: { ref: 'nope' }, merged_at: null, html_url: 'https://github.com/me/covered/pull/4' }
+          ]);
+        }
         return send([
           { number: 7, title: 'build(deps): bump thing from 2.0.0 to 2.0.1', user: { login: 'dependabot[bot]' }, head: { ref: 'dependabot/npm_and_yarn/thing', sha: 'sha7' }, base: { ref: 'main' }, created_at: ago(3), updated_at: ago(1), html_url: 'https://github.com/me/covered/pull/7', labels: [] },
           { number: 8, title: 'A human change', user: { login: 'me' }, head: { ref: 'feat', sha: 'sha8' }, base: { ref: 'main' }, created_at: ago(2), updated_at: ago(1), html_url: 'https://github.com/me/covered/pull/8', labels: [] }
@@ -122,10 +125,10 @@ before(async () => {
   process.env.GITHUB_TOKEN = 'test-token';
   process.env.GITHUB_API_URL = `http://127.0.0.1:${gh.address().port}`;
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
-  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.jsonl');
+  process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
   process.env.GH_AUTO_REFRESH = 'false';
-  process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
-  process.env.DATA_DIR = path.join(__dirname, 'fixtures');
+  process.env.GH_ALLOW_WRITES = 'true';
+  process.env.GH_WEBHOOK_SECRET = 'test-only-no-listener';
   process.env.PORT = '0';
 
   const express = require('express');
@@ -147,8 +150,14 @@ before(async () => {
 });
 
 after(() => {
-  if (server) server.close();
-  if (gh) gh.close();
+  // closeAllConnections is required, not tidy-up: Node's global fetch pools
+  // keep-alive sockets to the fake GitHub server, and plain close() waits on
+  // them forever, so the test process never exits and `node --test` hangs.
+  for (const s of [server, gh]) {
+    if (!s) continue;
+    s.closeAllConnections?.();
+    s.close();
+  }
   if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
 });
 
@@ -217,6 +226,68 @@ describe('GitHub API tests (configured)', () => {
     assert.ok(r.json.every(g => g.gaps.length > 0));
   });
 
+  it('GET /api/gh/actions returns the work queue with the staleness contract', async () => {
+    const r = await request(port, '/api/gh/actions');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.dataAsOf, 'dataAsOf present');
+    assert.equal(r.json.stale, false, 'fresh right after collection');
+    assert.equal(typeof r.json.staleAfterMinutes, 'number');
+
+    const types = r.json.actions.map(a => a.type);
+    // me/covered's green patch bump #7 is mergeable; me/naked's disabled
+    // alerts and missing config become executable gap actions.
+    assert.ok(types.includes('merge_pr'));
+    assert.ok(types.includes('enable_alerts'));
+    assert.ok(types.includes('add_dependabot_config'));
+
+    const merge = r.json.actions.find(a => a.type === 'merge_pr');
+    assert.equal(merge.pr, 7);
+    assert.equal(merge.verdict, 'safe_to_merge');
+    assert.match(merge.command, /gh pr merge 7 --repo me\/covered --squash/);
+    // Executable queue order: enable_alerts before merge_pr before config gaps.
+    assert.ok(types.indexOf('enable_alerts') < types.indexOf('merge_pr'));
+  });
+
+  it('GET /api/gh/merge-plan builds trains from fetched PR file lists', async () => {
+    const r = await request(port, '/api/gh/merge-plan');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.dataAsOf);
+    assert.equal(r.json.repos.length, 1);
+    const [repo] = r.json.repos;
+    assert.equal(repo.repo, 'me/covered');
+    assert.equal(repo.trainCount, 1);
+    const [step] = repo.trains[0].steps;
+    assert.equal(step.pr, 7);
+    assert.equal(step.afterPr, null);
+    assert.equal(step.policy, 'auto_ok');
+    assert.equal(repo.trains[0].filesUnknown, false);
+    assert.match(step.commands.at(-1), /gh pr merge 7/);
+  });
+
+  it('GET /api/openapi.json describes every /api/gh endpoint', async () => {
+    const r = await request(port, '/api/openapi.json');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.openapi, '3.1.0');
+    for (const p of ['/api/gh/status', '/api/gh/actions', '/api/gh/repos', '/api/gh/prs', '/api/gh/alerts', '/api/gh/coverage', '/api/gh/refresh', '/api/digest.md', '/healthz']) {
+      assert.ok(r.json.paths[p], `spec missing ${p}`);
+    }
+  });
+
+  it('GET /api/digest.md renders the populated briefing as markdown', async () => {
+    const r = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/api/digest.md`, res => {
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+      }).on('error', reject);
+    });
+    assert.equal(r.status, 200);
+    assert.match(r.type, /text\/markdown/);
+    assert.match(r.body, /# Patch Board digest/);
+    assert.match(r.body, /safe to merge/);
+    assert.match(r.body, /me\/covered/);
+  });
+
   it('GET /health includes GitHub integration state', async () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
@@ -250,8 +321,8 @@ describe('GitHub API tests (configured)', () => {
     assert.ok(empty.json.count >= 2);
   });
 
-  it('GET /api/gh/history returns a snapshot per scan', async () => {
-    const r = await request(port, '/api/gh/history');
+  it('GET /api/gh/snapshots returns a snapshot per scan', async () => {
+    const r = await request(port, '/api/gh/snapshots');
     assert.equal(r.status, 200);
     assert.ok(r.json.length >= 1);
     const latest = r.json[r.json.length - 1];
@@ -270,63 +341,90 @@ describe('GitHub API tests (configured)', () => {
     assert.equal(r.json.changes, null);
   });
 
-  it('POST /api/gh/merge refuses to write unless writes are enabled', async () => {
-    const r = await request(port, '/api/gh/merge', 'POST', { body: { repo: 'me/covered', number: 7 } });
-    assert.equal(r.status, 403);
-    assert.match(r.json.error, /GH_ALLOW_WRITES/);
-
-    // Still open — nothing was merged.
+  it('keeps merge and webhook routes absent even with legacy opt-in flags', async () => {
+    for (const route of ['/api/gh/merge', '/api/gh/webhook']) {
+      const response = await request(port, route, 'POST', { body: { repo: 'me/covered', number: 7 } });
+      assert.equal(response.status, 404);
+      assert.match(response.json.error, /No such endpoint/);
+    }
     const prs = await request(port, '/api/gh/prs?kind=dependabot');
     assert.deepEqual(prs.json.map(pr => pr.number), [7]);
   });
+});
 
-  it('POST /api/gh/webhook rejects anything it cannot verify', async () => {
-    const body = JSON.stringify({ repository: { full_name: 'me/covered' }, action: 'created' });
-    const unsigned = await request(port, '/api/gh/webhook', 'POST', {
-      body, headers: { 'x-github-event': 'dependabot_alert' }
-    });
-    assert.equal(unsigned.status, 401);
-
-    const wrong = await request(port, '/api/gh/webhook', 'POST', {
-      body, headers: { 'x-github-event': 'dependabot_alert', 'x-hub-signature-256': sign('something else') }
-    });
-    assert.equal(wrong.status, 401);
-  });
-
-  it('POST /api/gh/webhook re-collects the repo a signed event names', async () => {
-    const body = JSON.stringify({ repository: { full_name: 'me/covered' }, action: 'created' });
-    const r = await request(port, '/api/gh/webhook', 'POST', {
-      body, headers: { 'x-github-event': 'dependabot_alert', 'x-hub-signature-256': sign(body) }
-    });
+describe('GitHub insight endpoints (configured)', () => {
+  it('GET /api/gh/posture separates enabled, disabled and unreadable settings', async () => {
+    const r = await request(port, '/api/gh/posture');
     assert.equal(r.status, 200);
-    assert.equal(r.json.action, 'recollect');
-    assert.equal(r.json.repo, 'me/covered');
-
-    const ping = JSON.stringify({ zen: 'Keep it logically awesome.' });
-    const pinged = await request(port, '/api/gh/webhook', 'POST', {
-      body: ping, headers: { 'x-github-event': 'ping', 'x-hub-signature-256': sign(ping) }
-    });
-    assert.equal(pinged.json.action, 'ack');
-
-    const starred = JSON.stringify({ repository: { full_name: 'me/covered' } });
-    const ignored = await request(port, '/api/gh/webhook', 'POST', {
-      body: starred, headers: { 'x-github-event': 'star', 'x-hub-signature-256': sign(starred) }
-    });
-    assert.equal(ignored.json.action, 'ignore');
+    const f = r.json.features;
+    assert.deepEqual(f.dependabotConfig.enabled, ['me/covered']);
+    assert.deepEqual(f.dependabotConfig.disabled, ['me/naked']);
+    assert.deepEqual(f.dependabotAlerts.disabled, ['me/naked'], 'a 403 saying "disabled" is disabled');
+    // me/naked has no security_and_analysis payload, so the flag is unreadable —
+    // which must never be reported as "off".
+    assert.deepEqual(f.securityUpdates.enabled, ['me/covered']);
+    assert.deepEqual(f.securityUpdates.unknown, ['me/naked']);
+    assert.equal(r.json.activeCount, 2);
+    assert.ok(r.json.gaps.some(g => g.id === 'alerts-disabled'));
   });
 
-  // Last on purpose: this test deliberately exhausts the merge budget, and the
-  // window outlives the request that trips it.
-  it('rate-limits the merge endpoint', async () => {
-    const fire = () => request(port, '/api/gh/merge', 'POST', { body: { repo: 'me/covered', number: 7 } });
+  it('GET /api/gh/merges returns merged PRs only, newest first, with the bump parsed', async () => {
+    const r = await request(port, '/api/gh/merges');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.map(m => m.number), [5, 6], 'PR 4 was closed without merging');
+    assert.equal(r.json[0].kind, 'dependabot');
+    assert.equal(r.json[0].bump.package, 'thing');
+    assert.equal(r.json[0].bump.to, '2.0.0');
+  });
 
-    let limited = null;
-    for (let i = 0; i < 40 && !limited; i++) {
-      const r = await fire();
-      if (r.status === 429) limited = r;
-    }
+  it('GET /api/gh/merges filters by kind', async () => {
+    const bots = await request(port, '/api/gh/merges?kind=dependabot');
+    assert.deepEqual(bots.json.map(m => m.number), [5]);
+    const humans = await request(port, '/api/gh/merges?kind=other');
+    assert.deepEqual(humans.json.map(m => m.number), [6]);
+  });
 
-    assert.ok(limited, 'expected the limiter to reject a burst of merge requests');
-    assert.match(limited.json.error, /slow down/i);
+  it('GET /api/gh/trends counts human merges apart from dependency ones', async () => {
+    const r = await request(port, '/api/gh/trends?days=30');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.derived.totals.merges, 1, 'dependency PRs');
+    assert.equal(r.json.derived.totals.otherMerges, 1, 'human PRs, counted but not conflated');
+    assert.equal(r.json.derived.days.length, 30);
+    // One open critical alert raised inside the window.
+    assert.equal(r.json.derived.backlogChange, 1);
+    assert.equal(r.json.derived.backlog.critical.at(-1), 1);
+    assert.ok(r.json.mergeCoverage, 'the truncation caveat travels with the data');
+    assert.deepEqual(r.json.mergeCoverage.truncatedRepos, []);
+  });
+
+  it('GET /api/gh/trends records the scan it just ran', async () => {
+    const r = await request(port, '/api/gh/trends');
+    assert.equal(r.json.recorded.meta.count, r.json.recorded.snapshots.length,
+      'the plotted series must agree with the count reported beside it');
+    assert.equal(r.json.recorded.snapshots.length, 1);
+    assert.equal(r.json.recorded.snapshots[0].alerts.critical, 1);
+  });
+
+  it('GET /api/gh/history returns scans newest-first, oldest without a delta', async () => {
+    const r = await request(port, '/api/gh/history');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.snapshots.length, 1);
+    assert.equal(r.json.snapshots[0].delta, null, 'nothing to compare the first scan against');
+    assert.equal(r.json.snapshots[0].repoCount, 2);
+  });
+
+  it('GET /api/gh/calendar buckets activity by day', async () => {
+    const r = await request(port, '/api/gh/calendar?days=30');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.cells.length, 30);
+    const totals = r.json.cells.reduce((acc, c) => ({
+      raised: acc.raised + c.raised, merges: acc.merges + c.merges, other: acc.other + c.otherMerges
+    }), { raised: 0, merges: 0, other: 0 });
+    assert.equal(totals.raised, 1);
+    assert.equal(totals.merges, 1);
+    assert.equal(totals.other, 1);
+    const day = r.json.cells.find(c => c.raised);
+    assert.equal(day.critical, 1);
+    assert.equal(day.alerts[0].package, 'thing');
   });
 });

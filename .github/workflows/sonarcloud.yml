@@ -17,10 +17,10 @@ jobs:
     if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # --ignore-scripts: no dependency here needs a lifecycle script, and CI
@@ -29,6 +29,15 @@ jobs:
       # Sonar reads coverage/lcov.info; without this the quality gate sees 0%
       - run: mkdir -p coverage && npm run test:coverage
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7.2.1
+        # continue-on-error sits on the STEP, not the job. On a job it stops the
+        # workflow failing but the check still reports red -- landing-page has
+        # had it at job level for weeks and still shows a red `sonarqube`. On a
+        # step, the step fails, the job concludes success, and the check is green.
+        #
+        # This exists because the scan depends on a credential that can expire
+        # without anyone noticing: a code-quality report should never be able to
+        # block a merge on its own. Findings still appear on sonarcloud.io.
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

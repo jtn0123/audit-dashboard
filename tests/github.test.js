@@ -136,6 +136,18 @@ describe('posture', () => {
     assert.equal(posture.parseBumpTitle('Add a feature'), null);
   });
 
+  it('parses the "update X requirement" title shape too', () => {
+    // Dependabot uses this form for pip constraint files. It previously did not
+    // match, so every such PR carried bump: null and was reported as an
+    // unparseable bump needing a human.
+    assert.deepEqual(
+      posture.parseBumpTitle('chore(deps): update fakeredis requirement from >=2.37.0 to >=2.37.1'),
+      { package: 'fakeredis', from: '>=2.37.0', to: '>=2.37.1' });
+    assert.deepEqual(
+      posture.parseBumpTitle('chore(deps): update pytest requirement from <10,>=8 to >=9.1.1'),
+      { package: 'pytest', from: '<10,>=8', to: '>=9.1.1' });
+  });
+
   it('picks the freshest scan signal and names its source', () => {
     const scan = posture.resolveLastScan({
       dependabotRunAt: ago(10),
@@ -350,9 +362,16 @@ function fakeGitHub() {
           }]
         });
       }
-      if (rest.startsWith('/code-scanning/analyses')) return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
+      if (rest.startsWith('/code-scanning/analyses')) {
+        // me/naked: the token cannot look (missing "Code scanning alerts"
+        // grant) — must surface as unknown, never as "disabled".
+        if (full === 'me/naked') return fakeResponse({ status: 403, body: { message: 'Resource not accessible by personal access token' } });
+        return fakeResponse({ status: 404, body: { message: 'no analysis found' } });
+      }
       if (rest.includes('/check-runs')) {
-        return json({ check_runs: rest.startsWith('/commits/sha1') ? [{ status: 'completed', conclusion: 'success' }] : [{ status: 'completed', conclusion: 'failure' }] });
+        return json({ check_runs: rest.startsWith('/commits/sha1')
+          ? [{ name: 'checks', status: 'completed', conclusion: 'success' }]
+          : [{ name: 'SonarCloud Scan', status: 'completed', conclusion: 'failure' }] });
       }
     }
     return fakeResponse({ status: 404, body: { message: 'Not Found' } });
@@ -387,6 +406,12 @@ describe('collector end-to-end', () => {
     assert.equal(covered.prs.counts.other, 1);
     assert.equal(covered.prs.dependabot[0].checks.state, 'passing');
     assert.equal(covered.prs.other[0].checks.state, 'failing');
+    // A failing Sonar check is a config problem (dead SONAR_TOKEN), surfaced
+    // as a gap that carries the two links that fix it.
+    const sonar = covered.gaps.find(g => g.id === 'sonar-failing');
+    assert.ok(sonar, 'expected sonar-failing gap');
+    assert.equal(sonar.links.length, 2);
+    assert.match(sonar.links[1].url, /me\/covered\/settings\/secrets\/actions$/);
     assert.equal(covered.lastScan.source, 'dependabot-run');
 
     const naked = state.repos.find(r => r.fullName === 'me/naked');
@@ -394,6 +419,10 @@ describe('collector end-to-end', () => {
     assert.equal(naked.dependabot.alertsEnabled, false);
     assert.match(naked.dependabot.alertsError, /disabled/i);
     assert.equal(naked.lastScan.source, 'none');
+    // 403 on the code-scanning probe = the token cannot look; tri-state null,
+    // never false — "disabled" is reserved for a genuine 404.
+    assert.equal(naked.codeScanning.enabled, null);
+    assert.equal(covered.codeScanning.enabled, false);
     assert.ok(naked.gaps.some(g => g.id === 'alerts-disabled'));
 
     // Rollups the UI depends on

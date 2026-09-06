@@ -18,9 +18,13 @@ Runs on your own network. No data leaves the box except read-only calls to GitHu
 | **Advisories** (`/#/advisories`) | One row per advisory instead of per repo: how many repos a single CVE hits, how old the oldest instance is, and a copyable list of every repo to patch. |
 | **Packages** (`/#/packages`) | "A CVE just dropped — do I even use this?" Searches every repo's dependency graph, so it answers before an alert exists and covers packages that never get one. |
 | **Pull requests** (`/#/prs`) | Every open PR across every repo — Dependabot updates and human PRs — with CI status and age. |
+| **Findings** (`/#/findings`) | Every open Dependabot alert across every repo, searchable and groupable by package — one package causing five alerts shows as one row. |
 | **Coverage** (`/#/coverage`) | Repos with no `dependabot.yml`, alerts disabled, security updates off, or a stale scan — each with a one-click fix link. |
 | **Timeline** (`/#/timeline`) | Alerts, coverage and PR counts over time — one snapshot per scan, so you can see whether the portfolio is getting better. |
-| **Audits** (`/#/audits`) | The original nightly multi-agent audit views (Trends, History, Findings, Calendar) — unchanged. |
+| **Posture** (`/#/posture`) | Wider than Dependabot: code scanning, secret scanning and push protection per repo. Distinguishes *off* from *not visible to this token*. |
+| **Trends** (`/#/trends`) | Alert backlog and patch activity over time. Is the backlog growing faster than you patch it? |
+| **History** (`/#/history`) | What actually got patched — merged pull requests by day — plus the log of every scan this dashboard has run. |
+| **Calendar** (`/#/calendar`) | 13-week heatmap of alerts raised, PRs opened and updates merged. Click a day for what happened. |
 
 Each repo row expands to show the actual advisories (package, severity, fixed version),
 secret- and code-scanning alerts, dismissed alerts and why they were dismissed, the update
@@ -33,6 +37,22 @@ moved since your last visit, and each row carries a sparkline of its alert count
 **Keyboard:** `/` search · `j`/`k` move · `Enter` expand · `o` open on GitHub · `r` rescan ·
 `?` help. Filters, sort and search live in the URL, so any view of the board is a bookmark.
 
+### Where "history" comes from
+
+GitHub has no API for "how many alerts were open last Tuesday". Trends, History and
+Calendar therefore draw on two different sources, and the UI never blurs them:
+
+- **Recorded** — every completed scan appends a small snapshot to `GH_HISTORY_FILE` on
+  the cache volume. Exact, but it only covers the time since this dashboard first ran,
+  so it is empty on day one and gains a point per scan.
+- **Derived** — every open alert and PR carries the date it was raised, and merged
+  update PRs carry the date they landed, so the last 90 days can be reconstructed from
+  a single scan. Populated immediately, but it is a **floor** for past days: an alert
+  raised in May and fixed in June left nothing to count, so it never appears.
+
+Charts label which one they are showing. Nothing here writes to GitHub, and the
+snapshot file holds counts only — no credentials, no code.
+
 ## Quick start
 
 ```bash
@@ -41,6 +61,11 @@ docker compose up -d
 ```
 
 Open `http://localhost:3002`. The first scan runs at startup and takes a few seconds per repo.
+
+The container is hardened by default: digest-pinned base image, non-root user, read-only
+root filesystem (tmpfs `/tmp`, named volume for the cache), all capabilities dropped,
+`no-new-privileges`, a `/healthz` healthcheck, a 512 MB memory cap, and log rotation
+(json-file, 10 MB × 3). The port binds to `127.0.0.1` unless you set `HOST_BIND`.
 
 ### The token
 
@@ -59,20 +84,18 @@ A **fine-grained PAT**, read-only, with these repository permissions:
 
 A classic PAT with `repo` + `security_events` also works, but prefer the fine-grained one:
 the classic `repo` scope grants full **read/write** access to all your repositories, far more
-than this dashboard needs. By default the dashboard only ever issues read requests — the
-single write it can perform (merging a green Dependabot PR) is off unless you turn it on.
+than this dashboard needs. The dashboard only issues read requests to GitHub; agents execute
+recommended commands externally using their own credentials.
 
 The optional scopes degrade quietly: without them the extra collectors report an error for
 that repo and the rest of the board still works. Turn a collector off entirely with its
 `GH_COLLECT_*` flag if you'd rather not grant the scope at all.
 
-### Merging from the dashboard (optional)
+### Read-only boundary
 
-Set `GH_ALLOW_WRITES=true` and give the token **Pull requests: Read and write** to get merge
-controls on green Dependabot PRs. Only bot-authored dependency updates whose CI is passing
-and which aren't drafts can be selected; merges run one at a time, because merging changes
-the base branch and a parallel batch leaves the rest conflicted. With the flag off, the merge
-endpoint returns 403 and no write ever reaches GitHub — the deployment is read-only by default.
+There is no GitHub merge endpoint or inbound webhook listener. The board emits commands
+and merge plans; agents verify and execute those outside the dashboard. Keep this service
+LAN-only with read-only credentials. Webhooks require a separate deployment decision.
 
 ## Configuration
 
@@ -80,7 +103,7 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GITHUB_TOKEN` | — | PAT. Without it the GitHub views show a setup screen and the rest of the app still works. |
+| `GITHUB_TOKEN` | — | PAT. Optional even for the GitHub views: the **Settings page** (`#/settings`) accepts a token at runtime, stores it mode-600 on the cache volume, and it outranks this env var. Without either, the GitHub views show a setup screen and the rest of the app still works. |
 | `GH_OWNERS` | *(all accessible)* | Comma-separated users/orgs to scan |
 | `GH_REPOS_INCLUDE` / `GH_REPOS_EXCLUDE` | — | Comma-separated globs, matched against `owner/repo` and `repo` |
 | `GH_INCLUDE_ARCHIVED` | `false` | Include archived repos (risk is discounted 4× when shown) |
@@ -103,14 +126,11 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_COLLECT_DISMISSED` | `true` | Fetch dismissed alerts and their stated reason |
 | `GH_COLLECT_SBOM` | `true` | Fetch each repo's dependency graph for the package search |
 | `GH_MAX_PACKAGES_PER_REPO` | `3000` | Cap on SBOM entries indexed per repo |
-| `GH_HISTORY_FILE` | `.cache/history.jsonl` | Append-only snapshot log behind Timeline |
-| `GH_HISTORY_DAYS` | `180` | How long snapshots are kept |
-| `GH_ALLOW_WRITES` | `false` | Enable the one-click merge of green Dependabot PRs |
-| `GH_WEBHOOK_SECRET` | — | Shared secret for `POST /api/gh/webhook`; unset disables the endpoint |
+| `GH_HISTORY_FILE` | next to the cache | Scan-snapshot series behind Trends / History / Calendar |
+| `GH_HISTORY_DAYS` | `180` | How long snapshots are kept (floor: 7) |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
-| `DATA_DIR` | `..` | Nightly audit reports (`YYYY-MM-DD/` dirs) for the Audits views |
-| `AUDIT_DATA_DIR` | — | Host path compose mounts at `/data` (compose only) |
 | `PORT` | `3002` | Server port |
+| `HOST_BIND` | `127.0.0.1` | Host interface compose binds the port to (compose only). Set to the box's LAN IP for LAN access; never a WAN-facing interface. |
 | `ALLOWED_ORIGINS` | — | Extra CORS origins for your LAN hostnames |
 
 ## How "last scan" is determined
@@ -147,29 +167,6 @@ Risk drives the default sort, so the top of the table is where to start:
 Archived repos are divided by 4. Capped at 100. One unpatched critical outranks a repo that
 merely lacks a config — one is exploitable today, the other is a process gap.
 
-## Push instead of poll (optional)
-
-Polling every 30 minutes means a new critical alert can sit unseen for 29 of them. If the box
-is reachable from GitHub — a tunnel, a port forward — point a webhook at it instead:
-
-1. Set `GH_WEBHOOK_SECRET` to a random string and restart.
-2. Add a webhook (repo or org level) with payload URL `https://your-host/api/gh/webhook`,
-   content type `application/json`, the same secret, and these events:
-   **Dependabot alerts**, **Pull requests**, **Code scanning alerts**,
-   **Secret scanning alerts**, **Repositories**.
-
-A delivery re-collects only the repo it names, so an alert costs a handful of API calls
-rather than a full rescan. Requests without a valid `x-hub-signature-256` are rejected with
-401 — the signature is checked in constant time before the body is parsed — and the endpoint
-returns 503 while `GH_WEBHOOK_SECRET` is unset. A payload whose repository name isn't shaped
-like `owner/repo` is ignored rather than sanitized downstream, since that name would
-otherwise become a request path. Both the webhook (120/min) and the merge endpoint (30/min)
-are rate-limited: this is the one route meant to face the internet, and it has to run an
-HMAC before it can reject anything.
-
-Keep the polling interval as a safety net; webhooks and polling are complementary, not
-exclusive.
-
 ## Rate limits
 
 A 30-repo account costs roughly 300 API calls per refresh on a cold cache with every
@@ -193,32 +190,62 @@ Remaining quota is shown in the header.
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
 | `GET` | `/api/gh/advisories` | Alerts pivoted to one row per advisory — `?severity=`, `?minRepos=` |
 | `GET` | `/api/gh/packages` | Cross-repo dependency-graph search — `?q=` |
-| `GET` | `/api/gh/history` | Every snapshot inside the retention window |
+| `GET` | `/api/gh/snapshots` | Snapshot series for Timeline and sparklines |
 | `GET` | `/api/gh/changes` | What moved — `?since=` (ISO timestamp, required) |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
-| `POST` | `/api/gh/refresh` | Force a rescan now |
-| `POST` | `/api/gh/merge` | Merge one green Dependabot PR — `{repo, number, method}`; 403 unless `GH_ALLOW_WRITES` |
-| `POST` | `/api/gh/webhook` | GitHub webhook receiver; requires a valid `x-hub-signature-256` |
+| `GET` | `/api/gh/posture` | Cross-repo scanning posture — on / off / not visible, kept distinct |
+| `GET` | `/api/gh/merges` | Recently merged PRs — `?days=`, `?kind=` |
+| `GET` | `/api/gh/trends` | Daily series — `?days=`. Both the recorded and derived sources (see below) |
+| `GET` | `/api/gh/history` | Recorded scans, newest first, each with its delta from the previous one |
+| `GET` | `/api/gh/calendar` | Per-day activity cells — `?days=` |
+| `GET` | `/api/gh/actions` | Agent-facing work queue: verdicts + literal `gh` commands, freshness-stamped |
+| `GET` | `/api/gh/merge-plan` | Conflict-aware merge ordering — serial "trains" from PR file overlap, parallel otherwise |
+| `POST` | `/api/gh/refresh` | Force a rescan now (blocks until the cache is fresh — refresh-then-read) |
+| `GET` | `/healthz` | Liveness probe (no I/O — wired into the compose healthcheck) |
 | `GET` | `/health` | Health + version + GitHub integration state |
-| `GET` | `/api/dates`, `/api/summary`, `/api/report/:date[/:agent[/md]]`, `/api/findings`, `/api/diff/:d1/:d2?`, `/api/trends` | Nightly audit data |
 
 Everything the UI reads is a plain JSON endpoint, so it's easy to wire into Home Assistant,
 a status page, or a cron job that pokes you on Slack.
 
+## Agent access (MCP)
+
+`mcp/server.js` is a dependency-free MCP server (stdio transport) that exposes the
+dashboard to AI agents as native tools: `get_status`, `refresh_and_wait`, `list_actions`,
+`get_merge_plan`, `get_repo_posture`, `list_alerts`, `get_coverage_gaps`,
+`get_security_posture`, `list_merges`, `get_trends`. The repo's
+`.mcp.json` registers it for Claude Code automatically — sessions opened in this project
+can pull the work queue and execute it with their own credentials.
+
+The server holds no tokens and can take no action against GitHub: it only reads this
+dashboard's API. Point it elsewhere with `PATCHBOARD_URL` (default `http://127.0.0.1:3002`).
+For other MCP clients, run `node mcp/server.js` with stdio transport.
+
+### Policy guardrails
+
+`.patchboard-policy.yml` decides what an agent may execute unattended. Every queue entry
+is stamped `policy: auto_ok | requires_human` plus the rule that decided it; the contract
+(stated in `/llms.txt`) is that agents execute only `auto_ok`. Switches cover patch/minor
+merges, docker bumps, superseding closes, and the enable-alerts/security-updates fixes;
+`never_auto` globs put whole repos permanently behind a human. Policy is a brake, never an
+accelerator — it cannot promote a major bump, a red-CI PR, or a human PR past its verdict.
+The file is re-read on every queue request; in the container it ships with the image, so
+edit → push → redeploy. Override the path with `PATCHBOARD_POLICY_FILE`.
+
 ## Architecture
 
 ```text
-├── server.js              # Express: audit-file API + /api/gh/* read models
+├── server.js              # Express: /api/gh/* read models over the collector cache
 ├── lib/
 │   ├── config.js          # Env parsing, repo include/exclude globs
 │   ├── github.js          # REST client — ETags, pagination, rate limits (no deps)
 │   ├── collector.js       # Background poller: discovers repos, fetches signals, caches
 │   ├── posture.js         # Pure: gaps, risk score, last-scan resolution, rollups
-│   ├── history.js         # Append-only snapshot log + "what changed since" diffing
-│   └── webhook.js         # Signature verification and per-event re-collect planning
+│   ├── history.js         # Local scan-snapshot series — the only record of "before"
+│   └── timeline.js        # Pure: day buckets for trends and the calendar heatmap
 ├── public/
-│   ├── js/app.js          # Audit views + router
-│   ├── js/repos.js        # Patch board, advisories, packages, PRs, coverage, timeline
+│   ├── js/app.js          # Shared helpers, hash router, chart defaults
+│   ├── js/repos.js        # Patch board, PR, coverage and settings views
+│   ├── js/insights.js     # Posture, trends, history, findings, calendar views
 │   └── css/style.css
 └── tests/                 # node --test; the collector is tested against a fake GitHub
 ```

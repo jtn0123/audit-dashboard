@@ -3,12 +3,10 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const crypto = require('node:crypto');
 
 const { loadConfig } = require('../lib/config');
 const posture = require('../lib/posture');
 const { History, snapshot } = require('../lib/history');
-const { verifySignature, planForEvent } = require('../lib/webhook');
 const { Collector, normalizeSbomPackages, buildPackageIndex } = require('../lib/collector');
 
 const DAY = 86_400_000;
@@ -184,6 +182,7 @@ describe('SBOM package index', () => {
   it('survives a malformed SBOM', () => {
     assert.deepEqual(normalizeSbomPackages(null), []);
     assert.deepEqual(normalizeSbomPackages([null, 5, {}]), []);
+    assert.deepEqual(normalizeSbomPackages([{ name: 5, externalRefs: {} }, { externalRefs: [null] }]), []);
   });
 
   it('indexes packages by ecosystem:name across repos', () => {
@@ -247,6 +246,14 @@ describe('history', () => {
     assert.equal(history.changesSince(new Date().toISOString()), null);
   });
 
+  it('migrates a legacy history containing only one complete JSONL row', () => {
+    const file = path.join(SCRATCH, 'single-row.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ at: new Date(NOW).toISOString(), alerts: 4, byRepo: { 'me/one': 4 } }) + '\n');
+    const history = new History({ file, now: () => NOW });
+    assert.equal(history.read().length, 1);
+    assert.equal(history.read()[0].alerts, 4);
+  });
+
   it('ignores a torn final line instead of losing the whole file', () => {
     const dir = tmpdir();
     const file = path.join(dir, 'h.jsonl');
@@ -303,169 +310,6 @@ describe('history', () => {
   });
 });
 
-// === webhook =============================================================
-
-describe('webhook', () => {
-  const sign = (body, secret) => `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
-
-  it('accepts a correctly signed body', () => {
-    const body = Buffer.from('{"zen":"hi"}');
-    assert.equal(verifySignature(body, sign(body, 's3cret'), 's3cret'), true);
-  });
-
-  it('rejects wrong secrets, tampered bodies and malformed signatures', () => {
-    const body = Buffer.from('{"zen":"hi"}');
-    assert.equal(verifySignature(body, sign(body, 'other'), 's3cret'), false);
-    assert.equal(verifySignature(Buffer.from('{"zen":"ho"}'), sign(body, 's3cret'), 's3cret'), false);
-    // A short signature must not throw out of timingSafeEqual.
-    assert.equal(verifySignature(body, 'sha256=beef', 's3cret'), false);
-    assert.equal(verifySignature(body, '', 's3cret'), false);
-    assert.equal(verifySignature(body, sign(body, 's3cret'), ''), false);
-    // A string body would hash differently than the bytes GitHub signed.
-    assert.equal(verifySignature('{"zen":"hi"}', sign(body, 's3cret'), 's3cret'), false);
-  });
-
-  it('plans a re-collect for events that change a repo posture', () => {
-    const payload = { repository: { full_name: 'me/app' }, action: 'created' };
-    for (const event of ['dependabot_alert', 'pull_request', 'code_scanning_alert', 'secret_scanning_alert']) {
-      const plan = planForEvent(event, payload);
-      assert.equal(plan.action, 'recollect', event);
-      assert.equal(plan.repo, 'me/app');
-    }
-  });
-
-  it('acks a ping, ignores noise and drops deleted repos', () => {
-    assert.equal(planForEvent('ping', { zen: 'hi' }).action, 'ack');
-    assert.equal(planForEvent('star', { repository: { full_name: 'me/app' } }).action, 'ignore');
-    assert.equal(planForEvent('dependabot_alert', {}).action, 'ignore');
-    const dropped = planForEvent('repository', { repository: { full_name: 'me/app' }, action: 'deleted' });
-    assert.equal(dropped.action, 'drop');
-    assert.equal(dropped.repo, 'me/app');
-  });
-
-  it('refuses to act on a repository name that is not owner/repo', () => {
-    // The name becomes a request path and a log line, so a payload that smuggles
-    // a traversal, a query string or a newline must not get that far.
-    const bad = [
-      'me/app/../../admin', '../etc/passwd', 'me/app?x=1', 'me/app\nINFO fake log line',
-      'me app', 'noslash', 'me/', '/app', '', 42, { full_name: 'me/app' },
-      `me/${'a'.repeat(200)}`
-    ];
-    for (const full_name of bad) {
-      const plan = planForEvent('dependabot_alert', { repository: { full_name }, action: 'created' });
-      assert.equal(plan.action, 'ignore', `should ignore ${JSON.stringify(full_name)}`);
-      assert.equal(plan.repo, undefined);
-    }
-    // The shapes GitHub actually sends still pass.
-    for (const full_name of ['me/app', 'my-org/my.repo', 'a/b', 'me/audit-dashboard']) {
-      assert.equal(planForEvent('dependabot_alert', { repository: { full_name } }).repo, full_name);
-    }
-  });
-});
-
-// === merge guardrails ====================================================
-
-describe('mergePullRequest', () => {
-  const collectorWith = (env, fetchImpl) =>
-    new Collector(loadConfig(scratchEnv(env)), { fetchImpl });
-
-  it('refuses to merge at all when writes are disabled', async () => {
-    let called = false;
-    const collector = collectorWith({}, async () => { called = true; });
-    await assert.rejects(
-      () => collector.mergePullRequest({ repo: 'me/app', number: 1 }),
-      err => err.status === 403 && /GH_ALLOW_WRITES/.test(err.message)
-    );
-    assert.equal(called, false, 'no request should reach GitHub');
-  });
-
-  it('rejects repo names and PR numbers that are not what they claim to be', async () => {
-    const collector = collectorWith({ GH_ALLOW_WRITES: 'true' }, async () => {
-      throw new Error('should not be called');
-    });
-    const bad = [
-      { repo: 'me/app/../../admin', number: 1 },
-      { repo: '../etc/passwd', number: 1 },
-      { repo: 'me/app?x=1', number: 1 },
-      { repo: '', number: 1 },
-      { repo: 'me/app', number: 0 },
-      { repo: 'me/app', number: -3 },
-      { repo: 'me/app', number: '1; rm -rf /' },
-      { repo: 'me/app', number: 1.5 }
-    ];
-    for (const args of bad) {
-      await assert.rejects(() => collector.mergePullRequest(args), err => err.status === 400, JSON.stringify(args));
-    }
-  });
-
-  it('merges with a squash by default and forgets the PR locally', async () => {
-    const seen = [];
-    const collector = collectorWith({ GH_ALLOW_WRITES: 'true' }, async (url, opts) => {
-      seen.push({ url, method: opts.method, body: opts.body });
-      return {
-        status: 200, ok: true,
-        headers: new Map([['content-type', 'application/json']]),
-        json: async () => ({ merged: true, sha: 'abc123' }),
-        text: async () => ''
-      };
-    });
-    const bump = number => ({
-      number, title: 'build(deps): bump pkg from 1 to 2', user: { login: 'dependabot[bot]' },
-      head: { ref: 'dependabot/npm_and_yarn/pkg-2', sha: `sha${number}` },
-      created_at: ago(1), updated_at: ago(1), html_url: `https://example.test/pull/${number}`
-    });
-    collector.state.repos = [posture.buildRepoPosture({
-      repo: { full_name: 'me/app', name: 'app', owner: { login: 'me' } },
-      config: { present: true, ecosystems: ['npm'] },
-      alertsEnabled: true,
-      pulls: [bump(7), bump(8)]
-    }, { now: NOW })];
-
-    const result = await collector.mergePullRequest({ repo: 'me/app', number: 7, method: 'rebase' });
-    assert.equal(result.merged, true);
-    assert.equal(result.sha, 'abc123');
-    assert.equal(result.method, 'rebase');
-    assert.match(seen[0].url, /\/repos\/me\/app\/pulls\/7\/merge$/);
-    assert.equal(seen[0].method, 'PUT');
-    assert.deepEqual(collector.state.repos[0].prs.dependabot.map(p => p.number), [8]);
-
-    // An unknown method falls back to squash rather than being passed through.
-    await collector.mergePullRequest({ repo: 'me/app', number: 8, method: 'force-push' });
-    const sent = typeof seen[1].body === 'string' ? JSON.parse(seen[1].body) : seen[1].body;
-    assert.equal(sent.merge_method, 'squash');
-  });
-});
-
-// === partial updates (the webhook path) ==================================
-
-describe('single-repo updates', () => {
-  const withRepos = () => {
-    const c = new Collector(loadConfig(scratchEnv()), { fetchImpl: async () => {} });
-    c.state.repos = ['me/one', 'me/two'].map(fullName => posture.buildRepoPosture({
-      repo: { full_name: fullName, name: fullName.split('/')[1], owner: { login: 'me' } },
-      config: { present: true, ecosystems: ['npm'] },
-      alertsEnabled: true
-    }, { now: NOW }));
-    c.packagesByRepo = new Map([['me/one', [{ ecosystem: 'npm', name: 'lodash', version: '1' }]]]);
-    c.state.summary = posture.summarize(c.state.repos, { staleDays: 14 });
-    return c;
-  };
-
-  it('drops a deleted repo from the state, its packages and the rollup', () => {
-    const c = withRepos();
-    assert.equal(c.dropRepo('me/one'), true);
-    assert.deepEqual(c.state.repos.map(r => r.fullName), ['me/two']);
-    assert.equal(c.packagesByRepo.has('me/one'), false);
-    assert.equal(c.state.summary.activeCount, 1);
-  });
-
-  it('reports a no-op for a repo it never knew about', () => {
-    const c = withRepos();
-    assert.equal(c.dropRepo('me/never-heard-of-it'), false);
-    assert.equal(c.state.repos.length, 2);
-  });
-});
-
 // === read models =========================================================
 
 describe('collector read models', () => {
@@ -491,9 +335,20 @@ describe('collector read models', () => {
   });
 
   it('ranks exact package matches above substring matches', () => {
-    const results = collector().searchPackages('lodash').results;
+    const c = collector();
+    c.state.packageIndex.entries.find(e => e.name === 'lodash.merge').repos.push(
+      { repo: 'me/three' }, { repo: 'me/four' }, { repo: 'me/five' }
+    );
+    const results = c.searchPackages('lodash').results;
     assert.deepEqual(results.map(r => r.name), ['lodash', 'lodash.merge']);
     assert.equal(results[0].repos.length, 2);
+  });
+
+  it('finds an exact match after more than 500 partial matches', () => {
+    const c = collector();
+    c.state.packageIndex.entries = Array.from({ length: 501 }, (_, i) => ({ name: `aaa-${i}-lodash`, repos: [] }));
+    c.state.packageIndex.entries.push({ name: 'lodash', repos: [] });
+    assert.equal(c.searchPackages('lodash', { limit: 1 }).results[0].name, 'lodash');
   });
 
   it('reports totals but no results for an empty query', () => {

@@ -1,12 +1,12 @@
 /* Patch command center — cross-repo Dependabot coverage, alerts and open PRs.
-   Depends on helpers defined in app.js ($, app, api, navigate, severityBadge). */
+   Depends on helpers defined in app.js ($, app, api, esc, relTime, navigate,
+   severityBadge, viewHeader). */
 
 let ghState = { repos: [], overview: null, status: null, history: null, changes: null };
 let repoFilterKey = 'attention';
 let repoSort = 'risk';
 let repoSearch = '';
 const expandedRepos = new Set();
-const selectedPrs = new Set();
 
 // === URL-backed view state ===============================================
 // Filters live in the hash rather than sessionStorage so a view is
@@ -45,9 +45,6 @@ function syncStateFromUrl() {
   repoSearch = params.get('q') || '';
 }
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
-
 const FILTERS = [
   { key: 'attention', label: 'Needs attention' },
   { key: 'critical', label: 'Critical / high' },
@@ -56,7 +53,7 @@ const FILTERS = [
   { key: 'dependabot-prs', label: 'Update PRs' },
   { key: 'ci-failing', label: 'CI red' },
   { key: 'no-dependabot', label: 'No Dependabot' },
-  { key: 'stale', label: 'Stale scans' },
+  { key: 'stale', label: 'Stale GitHub scans' },
   { key: 'clean', label: 'Clean' },
   { key: 'all', label: 'All repos' }
 ];
@@ -72,7 +69,7 @@ const SORTS = [
   { key: 'risk', label: 'Risk' },
   { key: 'alerts', label: 'Alerts' },
   { key: 'prs', label: 'PRs' },
-  { key: 'scan', label: 'Oldest scan' },
+  { key: 'scan', label: 'Oldest GitHub scan' },
   { key: 'name', label: 'Name' }
 ];
 
@@ -83,19 +80,6 @@ const ECOSYSTEM_BY_LANGUAGE = {
   java: 'maven', kotlin: 'gradle', 'c#': 'nuget', php: 'composer',
   swift: 'swift', dart: 'pub', elixir: 'hex', shell: null, dockerfile: 'docker'
 };
-
-function relTime(iso) {
-  if (!iso) return 'never';
-  const secs = Math.floor((Date.now() - Date.parse(iso)) / 1000);
-  if (Number.isNaN(secs)) return 'unknown';
-  if (secs < 60) return 'just now';
-  const units = [['m', 60], ['h', 3600], ['d', 86400], ['mo', 2592000], ['y', 31536000]];
-  let out = `${Math.floor(secs / 60)}m ago`;
-  for (const [suffix, size] of units) {
-    if (secs >= size) out = `${Math.floor(secs / size)}${suffix} ago`;
-  }
-  return out;
-}
 
 function ageTone(days, staleDays) {
   if (days == null) return 'red';
@@ -125,7 +109,7 @@ async function loadGitHub(force = false) {
     if (previousVisit) {
       try { ghState.changes = await api(`/api/gh/changes?since=${encodeURIComponent(previousVisit)}`); } catch { ghState.changes = null; }
     }
-    try { ghState.history = await api('/api/gh/history'); } catch { ghState.history = null; }
+    try { ghState.history = await api('/api/gh/snapshots'); } catch { ghState.history = null; }
     localStorage.setItem(LAST_VISIT_KEY, new Date().toISOString());
   }
   return ghState;
@@ -194,7 +178,10 @@ async function refreshGitHub(btn) {
       throw new Error(body.error || `Refresh failed (${response.status})`);
     }
     ghState.repos = [];
-    await renderPatch();
+    // Every view carries this button, so redraw whichever one is open —
+    // hardcoding renderPatch() here swapped the patch board's content in
+    // under the Trends/History/Calendar heading.
+    await route();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh failed'; }
     console.warn('refresh failed', e);
@@ -275,7 +262,7 @@ function renderKpis(s, staleDays) {
       sub: 'human + app PRs', href: '#/prs'
     },
     {
-      filter: 'stale', label: 'Stale scans', value: cov.staleScans.length + cov.neverScanned.length,
+      filter: 'stale', label: 'Stale GitHub scans', value: cov.staleScans.length + cov.neverScanned.length,
       tone: (cov.staleScans.length + cov.neverScanned.length) ? 'warning' : 'ok',
       sub: `${cov.neverScanned.length} never scanned · >${staleDays}d`
     },
@@ -291,13 +278,19 @@ function renderKpis(s, staleDays) {
     }
   ];
 
-  return `<div class="kpi-row">${tiles.map(t => `
-    <div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}" onclick="${t.href ? `navigate('${t.href.slice(1)}')` : `setRepoFilterKey('${t.filter}')`}">
+  // Tiles act as filter buttons, so they carry the button role, a tab stop and
+  // Enter/Space by hand — a bare div is invisible to keyboard and screen readers.
+  return `<div class="kpi-row">${tiles.map(t => {
+    const action = t.href ? `navigate('${t.href.slice(1)}')` : `setRepoFilterKey('${t.filter}')`;
+    return `<div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}" role="button" tabindex="0"
+      aria-label="${esc(`${t.label}: ${t.value}. ${t.sub}`)}"
+      onclick="${action}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${action}}">
       <div class="kpi-label">${t.label}</div>
       <div class="kpi-value">${t.value}</div>
       <div class="kpi-sub">${t.sub}</div>
       ${t.bar || ''}
-    </div>`).join('')}</div>`;
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function renderControls() {
@@ -393,7 +386,7 @@ function renderRepoTable() {
     <div class="repo-table">
       <div class="repo-head">
         <span>Repository</span><span>Dependabot</span><span>Open alerts</span>
-        <span>PRs</span><span>Last scan</span><span>Trend</span><span>Next action</span>
+        <span>PRs</span><span>GitHub last scan</span><span>Trend</span><span>Next action</span>
       </div>
       ${repos.map(renderRepoRow).join('')}
     </div>
@@ -440,7 +433,7 @@ function renderRepoRow(r) {
   return `<div class="repo-row-wrap">
     <div class="repo-row ${open ? 'expanded' : ''}" role="button" tabindex="0"
       aria-expanded="${open}" aria-label="${esc(r.fullName)} details" data-repo="${esc(r.fullName)}"
-      onclick="toggleRepo('${esc(r.fullName)}')" onkeydown="repoRowKey(event, '${esc(r.fullName)}')">
+      onclick="toggleRepo('${jsAttr(r.fullName)}')" onkeydown="repoRowKey(event, '${jsAttr(r.fullName)}')">
       <span class="repo-name">
         <span class="expand-icon">${open ? '▾' : '▸'}</span>
         <span class="repo-title">${esc(r.name)}</span>
@@ -491,7 +484,7 @@ function renderRepoDetail(r) {
       <div class="gap-list">${r.gaps.map(g => `
         <div class="gap gap-${g.severity}">
           <span class="gap-label">${esc(g.label)}${g.detail ? ` <span class="muted">(${esc(g.detail)})</span>` : ''}</span>
-          <span class="gap-hint">${esc(g.hint)}</span>
+          <span class="gap-hint">${esc(g.hint)}${(g.links || []).map(l => ` · <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</span>
         </div>`).join('')}</div>
     </div>` : ''}
 
@@ -532,8 +525,8 @@ function renderRepoDetail(r) {
     </div>` : ''}
 
     ${r.prs.dependabot.length ? `<div class="detail-block">
-      <h4>Dependency update PRs (${r.prs.dependabot.length})${renderMergeBar(r)}</h4>
-      <div class="pr-list">${r.prs.dependabot.map(pr => renderPrItem(pr, false, r.fullName)).join('')}</div>
+      <h4>Dependency update PRs (${r.prs.dependabot.length})</h4>
+      <div class="pr-list">${r.prs.dependabot.map(pr => renderPrItem(pr)).join('')}</div>
     </div>` : ''}
 
     ${r.prs.other.length ? `<div class="detail-block">
@@ -575,95 +568,11 @@ function checkChip(checks) {
   return `<span class="chip ${cls}" title="${checks.failing} failing, ${checks.pending} pending of ${checks.total}">${label}</span>`;
 }
 
-/**
- * Merge controls, shown only when the server reports writes are enabled.
- * Selection is limited to PRs whose CI is green — the point is to clear the
- * safe ones in bulk, not to merge anything unverified.
- */
-function renderMergeBar(repo) {
-  if (!ghState.status?.allowWrites) return '';
-  const mergeable = repo.prs.dependabot.filter(pr => pr.checks?.state === 'passing' && !pr.draft);
-  if (!mergeable.length) return '';
-  const selected = mergeable.filter(pr => selectedPrs.has(`${repo.fullName}#${pr.number}`)).length;
-  return `<span class="merge-bar">
-    <button class="refresh-btn small" onclick="event.stopPropagation();selectAllGreen('${esc(repo.fullName)}')">
-      Select ${mergeable.length} green
-    </button>
-    <button class="refresh-btn small merge-go" ${selected ? '' : 'disabled'}
-      onclick="event.stopPropagation();mergeSelected('${esc(repo.fullName)}')">
-      Merge ${selected || ''} selected
-    </button>
-  </span>`;
-}
-
-function selectAllGreen(fullName) {
-  const repo = ghState.repos.find(r => r.fullName === fullName);
-  if (!repo) return;
-  const green = repo.prs.dependabot.filter(pr => pr.checks?.state === 'passing' && !pr.draft);
-  const allSelected = green.every(pr => selectedPrs.has(`${fullName}#${pr.number}`));
-  for (const pr of green) {
-    const key = `${fullName}#${pr.number}`;
-    if (allSelected) selectedPrs.delete(key);
-    else selectedPrs.add(key);
-  }
-  renderRepoTable();
-}
-
-function togglePrSelection(event, fullName, number) {
-  event.stopPropagation();
-  const key = `${fullName}#${number}`;
-  if (selectedPrs.has(key)) selectedPrs.delete(key);
-  else selectedPrs.add(key);
-  renderRepoTable();
-}
-
-/**
- * Merge the selected PRs one at a time. Sequential on purpose: merging changes
- * the base branch, so a batch fired in parallel can leave later PRs conflicted.
- */
-async function mergeSelected(fullName) {
-  const numbers = [...selectedPrs]
-    .filter(key => key.startsWith(`${fullName}#`))
-    .map(key => Number(key.split('#')[1]));
-  if (!numbers.length) return;
-
-  const failures = [];
-  for (const number of numbers) {
-    try {
-      const res = await fetch('/api/gh/merge', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ repo: fullName, number, method: 'squash' })
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) failures.push(`#${number}: ${body.error || res.status}`);
-      else selectedPrs.delete(`${fullName}#${number}`);
-    } catch (e) {
-      failures.push(`#${number}: ${e.message}`);
-    }
-  }
-
-  ghState.repos = [];
-  await renderPatch();
-  if (failures.length) {
-    const host = $('repo-table');
-    if (host) host.insertAdjacentHTML('beforebegin',
-      `<div class="merge-errors">Could not merge ${failures.length}: ${esc(failures.join(' · '))}</div>`);
-  }
-}
-
-/** Only bot-authored dependency updates are ever selectable for one-click merge. */
 function isUpdatePr(pr) { return pr.kind === 'dependabot' || pr.kind === 'renovate'; }
 
-function renderPrItem(pr, showRepo = false, selectableRepo = null) {
+function renderPrItem(pr, showRepo = false) {
   const stale = (pr.ageDays ?? 0) >= 14;
-  const canSelect = selectableRepo && ghState.status?.allowWrites &&
-    isUpdatePr(pr) && pr.checks?.state === 'passing' && !pr.draft;
-  const checked = canSelect && selectedPrs.has(`${selectableRepo}#${pr.number}`);
   return `<div class="pr-row">
-    ${canSelect ? `<input type="checkbox" class="pr-check" ${checked ? 'checked' : ''}
-      aria-label="Select PR ${pr.number} for merging"
-      onclick="togglePrSelection(event, '${esc(selectableRepo)}', ${pr.number})">` : ''}
     <a class="pr-item" href="${esc(pr.url)}" target="_blank" rel="noopener">
       <span class="pr-num">#${pr.number}</span>
       ${showRepo === true && pr.repo ? `<span class="pr-repo">${esc(pr.repo)}</span>` : ''}
@@ -693,7 +602,7 @@ function renderSetupSnippet(r) {
     <pre class="config-snippet">${esc(yaml)}</pre>
     <div class="detail-links">
       <a href="${esc(newFileUrl)}" target="_blank" rel="noopener">Create .github/dependabot.yml ↗</a>
-      <button class="refresh-btn small" onclick="event.stopPropagation();copyText(this, ${JSON.stringify(yaml).replace(/"/g, '&quot;')})">Copy YAML</button>
+      <button class="refresh-btn small" onclick="event.stopPropagation();copyText(this, ${esc(JSON.stringify(yaml))})">Copy YAML</button>
     </div>
   </div>`;
 }
@@ -817,16 +726,12 @@ function renderSetupScreen() {
     <ol>
       <li>Create a fine-grained PAT with <strong>Repository permissions → Metadata: Read</strong>,
           <strong>Dependabot alerts: Read</strong>, <strong>Pull requests: Read</strong>,
-          <strong>Contents: Read</strong>, <strong>Actions: Read</strong>
+          <strong>Contents: Read</strong>, <strong>Actions: Read</strong>, <strong>Administration: Read</strong>
           (a classic PAT with <code>repo</code> + <code>security_events</code> works too).</li>
-      <li>Set it as <code>GITHUB_TOKEN</code> in your <code>.env</code> / compose file.</li>
-      <li>Restart the container: <code>docker compose up -d</code></li>
+      <li>Paste it on the <a href="#/settings" onclick="navigate('/settings');return false"><strong>Settings page</strong></a> — no restart needed.</li>
     </ol>
-    <pre class="config-snippet">GITHUB_TOKEN=github_pat_xxx
-GH_OWNERS=your-username        # optional: limit to these users/orgs
-GH_REFRESH_MINUTES=30
-GH_STALE_DAYS=14</pre>
-    <p><a href="#/audits" onclick="navigate('/audits');return false">Go to the nightly audit dashboard →</a></p>
+    <p class="muted">(Setting <code>GITHUB_TOKEN</code> in the environment still works too.)</p>
+    <p><a href="#/settings" onclick="navigate('/settings');return false" class="refresh-btn" style="display:inline-block;text-decoration:none">Open Settings →</a></p>
   </div>`;
 }
 
@@ -864,7 +769,7 @@ async function renderPrs() {
     `<button class="repo-btn ${prKind === k ? 'active' : ''}" onclick="setPrKind('${k}')">${label} <span class="filter-count">${counts[k]}</span></button>`).join('')}
     </div>
     ${shown.length
-    ? `<div class="pr-list wide">${shown.map(pr => renderPrItem(pr, true, pr.repo)).join('')}</div>`
+    ? `<div class="pr-list wide">${shown.map(pr => renderPrItem(pr, true)).join('')}</div>`
     : '<div class="empty"><div class="icon">🎉</div><h3>No open pull requests</h3></div>'}`;
 }
 
@@ -927,7 +832,7 @@ function renderAdvisory(a) {
       ${a.patchedVersion ? `<span class="alert-fix">fix: ${esc(a.patchedVersion)}</span>` : '<span class="muted">no fix available</span>'}
       <span class="muted">oldest ${a.oldestDays}d</span>
       ${a.breaches ? `<span class="tone-critical">${a.breaches} past budget</span>` : ''}
-      <button class="refresh-btn small" onclick="copyText(this, ${JSON.stringify(advisoryMarkdown(a)).replace(/"/g, '&quot;')})">Copy</button>
+      <button class="refresh-btn small" onclick="copyText(this, ${esc(JSON.stringify(advisoryMarkdown(a)))})">Copy</button>
     </div>
     <div class="advisory-repos">
       ${a.repos.map(r => `<a class="advisory-repo ${r.breachesSla ? 'stale' : ''}" href="${esc(r.url)}" target="_blank" rel="noopener">
@@ -1016,7 +921,7 @@ function renderPackageResults(result, query) {
         <span class="chip chip-dim">${esc(p.ecosystem)}</span>
         <span class="pkg-name">${esc(p.name)}</span>
         <span class="pkg-count">${p.repos.length} repo${p.repos.length > 1 ? 's' : ''}</span>
-        <button class="refresh-btn small" onclick="copyText(this, ${JSON.stringify(packageMarkdown(p)).replace(/"/g, '&quot;')})">Copy</button>
+        <button class="refresh-btn small" onclick="copyText(this, ${esc(JSON.stringify(packageMarkdown(p)))})">Copy</button>
       </div>
       <div class="pkg-repos">${p.repos.map(r => {
     const repo = ghState.repos.find(x => x.fullName === r.repo);
@@ -1041,7 +946,7 @@ async function renderTimeline() {
   if (!state.status.configured) { app.innerHTML = renderSetupScreen(); return; }
 
   let rows;
-  try { rows = await api('/api/gh/history'); } catch (e) { showError('Could not load history', e.message); return; }
+  try { rows = await api('/api/gh/snapshots'); } catch (e) { showError('Could not load history', e.message); return; }
 
   if (!rows || rows.length < 2) {
     app.innerHTML = `${timelineHeader(rows?.length || 0)}
@@ -1148,43 +1053,213 @@ async function renderCoverage() {
   try { state = await loadGitHub(); } catch (e) { showError('Could not load GitHub data', e.message); return; }
   if (!state.status.configured) { app.innerHTML = renderSetupScreen(); return; }
 
+  const staleDays = state.status.staleDays;
   const active = state.repos.filter(r => !r.archived);
   const missing = active.filter(r => !r.dependabot.configPresent);
   const alertsOff = active.filter(r => r.dependabot.alertsEnabled === false);
   const noAutoFix = active.filter(r => r.dependabot.securityUpdatesEnabled === false);
-  const stale = active.filter(r => r.lastScan.source === 'none' || (r.lastScan.ageDays ?? 0) > state.status.staleDays);
-  const covered = active.length - new Set([...missing, ...alertsOff].map(r => r.fullName)).size;
+  // Unknown scan age counts as stale, not fresh: `?? 0` once made a repo with no
+  // resolvable last-scan date read as scanned today.
+  const stale = active.filter(r => r.lastScan.source === 'none' || (r.lastScan.ageDays ?? Infinity) > staleDays);
+  // "Scanned" is the narrow claim this number can actually support: a config is
+  // present and alerts are on. Repos that additionally lack auto-fix or have a
+  // stale scan are counted here too, so the sections below still have work in them.
+  const scanned = active.length - new Set([...missing, ...alertsOff].map(r => r.fullName)).size;
+  const percent = active.length ? Math.round((scanned / active.length) * 100) : 0;
 
-  const section = (title, hint, repos, extra) => `
+  const groups = [
+    {
+      title: 'No dependabot.yml', repos: missing,
+      hint: 'These repos never get scheduled version-update PRs. Adding a config starts them.',
+      link: r => ({
+        href: `${r.url}/new/${encodeURIComponent(r.defaultBranch || 'main')}?filename=.github/dependabot.yml&value=${encodeURIComponent(suggestedConfig(r))}`,
+        label: 'add config'
+      })
+    },
+    {
+      title: 'Dependabot alerts disabled', repos: alertsOff,
+      hint: 'Vulnerabilities in these repos are invisible — nothing is scanning them at all.',
+      link: r => ({ href: `${r.url}/settings/security_analysis`, label: 'enable' })
+    },
+    {
+      title: 'Security updates off', repos: noAutoFix,
+      hint: 'Alerts are raised, but Dependabot will not open the fix PR by itself.',
+      link: r => ({ href: `${r.url}/settings/security_analysis`, label: 'enable' })
+    },
+    {
+      title: `No scan in ${staleDays}+ days`, repos: stale,
+      hint: 'Configured, but no recent evidence of a run. Check the schedule or the Dependabot job log.',
+      link: r => ({ href: `${r.url}/network/updates`, label: 'job log' })
+    }
+  ];
+
+  const totalGaps = groups.reduce((n, g) => n + g.repos.length, 0);
+  // null means "this token cannot read the setting" — the gap sections
+  // correctly exclude it, so the all-clear copy must not claim it is enabled.
+  const unknownAutofix = active.filter(r => r.dependabot.securityUpdatesEnabled == null).length;
+
+  const section = g => `
     <div class="section">
-      <h3>${title} <span class="count">${repos.length}</span></h3>
-      <p class="section-hint">${hint}</p>
-      ${repos.length ? `<div class="coverage-list">${repos.map(r => `
-        <div class="coverage-row">
+      <h3>${esc(g.title)} <span class="count ${g.repos.length ? 'count-warn' : 'count-ok'}">${g.repos.length}</span></h3>
+      <p class="section-hint">${esc(g.hint)}</p>
+      ${g.repos.length ? `<div class="coverage-list">${g.repos.map(r => {
+    const link = g.link(r);
+    return `<div class="coverage-row">
           <a href="${esc(r.url)}" target="_blank" rel="noopener" class="repo-title">${esc(r.fullName)}</a>
           ${r.language ? `<span class="chip chip-dim">${esc(r.language)}</span>` : ''}
           ${r.private ? '<span class="chip chip-dim">private</span>' : ''}
-          <span class="muted">pushed ${relTime(r.pushedAt)}</span>
-          <span class="muted">last scan ${relTime(r.lastScan.at)}</span>
-          ${extra ? extra(r) : ''}
-        </div>`).join('')}</div>`
-    : '<div class="muted">None — all good.</div>'}
+          <span class="muted">pushed ${esc(relTime(r.pushedAt))}</span>
+          <span class="muted">last scan ${esc(relTime(r.lastScan.at))}</span>
+          <span class="coverage-action tone-${esc(r.action.tone)}">${esc(r.action.text)}</span>
+          <a class="mini-link" href="${esc(link.href)}" target="_blank" rel="noopener">${esc(link.label)} ↗</a>
+        </div>`;
+  }).join('')}</div>`
+    : '<div class="all-clear">✓ None — every active repo is clear here.</div>'}
     </div>`;
 
   app.innerHTML = `
-    <div class="patch-header">
-      <div>
-        <h2 class="patch-title">Dependabot coverage</h2>
-        <div class="patch-sub">${covered}/${active.length} active repos fully covered · scanned ${relTime(state.status.fetchedAt)}</div>
+    ${viewHeader('Dependabot coverage', `${scanned}/${active.length} active repos are being scanned · ${totalGaps
+    ? plural(totalGaps, 'gap')  + ' to close' : 'no gaps'} · ${esc(relTime(state.status.fetchedAt))}`)}
+    <div class="coverage-hero">
+      <div class="coverage-meter" role="img" aria-label="${percent} percent of active repos are being scanned">
+        <div class="coverage-meter-fill tone-${percent >= 90 ? 'ok' : percent >= 60 ? 'warning' : 'critical'}" style="width:${percent}%"></div>
       </div>
-      <button class="refresh-btn" onclick="refreshGitHub(this)">↻ Rescan</button>
+      <div class="coverage-hero-meta">
+        <strong>${percent}% scanned</strong>
+        <span class="muted">a dependabot.yml is present and alerts are on. Auto-fix and scan freshness are counted
+          separately below${state.repos.length - active.length
+    ? `, and ${state.repos.length - active.length} archived repos are excluded` : ''}.</span>
+      </div>
     </div>
-    ${section('No dependabot.yml', 'These repos never get version-update PRs. Add a config to start receiving them.', missing,
-    r => `<a class="mini-link" href="${esc(r.url)}/new/${esc(r.defaultBranch || 'main')}?filename=.github/dependabot.yml&value=${encodeURIComponent(suggestedConfig(r))}" target="_blank" rel="noopener">add config ↗</a>`)}
-    ${section('Dependabot alerts disabled', 'Vulnerabilities in these repos are invisible — nothing is scanning them.', alertsOff,
-    r => `<a class="mini-link" href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">enable ↗</a>`)}
-    ${section('Security updates off', 'Alerts are on, but Dependabot will not open fix PRs automatically.', noAutoFix,
-    r => `<a class="mini-link" href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">enable ↗</a>`)}
-    ${section(`No scan in ${state.status.staleDays}+ days`, 'Configured, but nothing has run recently. Check the schedule or the Dependabot job log.', stale,
-    r => `<a class="mini-link" href="${esc(r.url)}/network/updates" target="_blank" rel="noopener">job log ↗</a>`)}`;
+    ${totalGaps === 0
+    ? `<div class="empty"><div class="icon">🎉</div><h3>No gaps to close</h3>
+       <p>All ${active.length} active repos have a Dependabot config, alerts enabled, and a scan within the last
+          ${staleDays} days.${unknownAutofix
+    ? ` Automatic security updates are confirmed on for ${active.length - unknownAutofix} of them — this token
+          cannot read the setting on the other ${unknownAutofix}, which is not the same as it being off.`
+    : ' Automatic security updates are on.'}</p>
+       <a class="refresh-btn" style="display:inline-block;text-decoration:none;margin-top:14px"
+          href="#/posture" onclick="navigate('/posture');return false">See the wider security posture →</a></div>`
+    : groups.map(section).join('')}`;
+}
+
+// === Settings view =======================================================
+
+async function renderSettings() {
+  let s = { github: {} };
+  try { s = await api('/api/settings'); } catch { /* render with unknowns */ }
+  const gh = s.github || {};
+  const status = gh.configured
+    ? `<span class="ok-text">Connected${gh.viewer ? ` as <strong>${esc(gh.viewer.login)}</strong>` : ''}</span>
+       <span class="muted"> · token ${esc(gh.tokenTail || '')} from ${gh.source === 'settings' ? 'this page' : 'the environment'}</span>`
+    : '<span class="muted">Not connected — paste a token below.</span>';
+
+  const patUrl = 'https://github.com/settings/personal-access-tokens/new'
+    + '?name=patch-board-readonly'
+    + '&description=' + encodeURIComponent('Read-only token for the Patch Board dashboard. Never used to write.')
+    + '&metadata=read&contents=read&pull_requests=read&actions=read&administration=read&vulnerability_alerts=read&security_events=read';
+
+  app.innerHTML = `<div class="setup-screen">
+    <h2>Settings</h2>
+    <div class="settings-card">
+      <h3>GitHub token</h3>
+      <p>${status}</p>
+      <p class="muted">Read-only. Never written back to GitHub. Stored only on this box; never displayed again.</p>
+
+      ${gh.configured ? '<h4>What this token can see</h4><div id="access-grid" class="access-grid"><span class="muted">Checking…</span></div>' : ''}
+
+      <h4>Create it on GitHub</h4>
+      <p><a class="refresh-btn" style="display:inline-block;text-decoration:none" href="${patUrl}"
+            target="_blank" rel="noopener">Create token on GitHub ↗</a>
+         <span class="muted"> — form opens pre-filled</span></p>
+      <ol class="token-steps">
+        <li>Repository access: <strong>All repositories</strong>.</li>
+        <li>Check all six permissions really are <strong>Read-only</strong> (same six as the grid above — GitHub may not
+            pre-fill every one); everything else No access. The grid catches anything missing.</li>
+        <li>Pick an expiration → <strong>Generate</strong>.</li>
+        <li>Copy the <code>github_pat_…</code> and paste it below — GitHub shows it once.</li>
+      </ol>
+
+      <div class="settings-row">
+        <input type="password" id="token-input" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+        <button class="refresh-btn" id="token-save" onclick="saveToken()">Save & connect</button>
+      </div>
+      <div id="token-result"></div>
+      <p class="muted" style="margin-top:10px">When the token expires, repeat these steps and paste the new one —
+         it takes effect immediately, no restart.</p>
+      ${gh.source === 'settings' ? `<p class="muted" style="margin-top:10px">
+        <a href="#" onclick="clearToken();return false">Remove saved token</a>
+        ${gh.envTokenPresent ? ' (falls back to the environment token)' : ' (disconnects GitHub views)'}</p>` : ''}
+    </div>
+  </div>`;
+  if (gh.configured) loadAccessGrid();
+}
+
+// Fourth element: the permission to add on the token. Editing a fine-grained
+// PAT's permissions applies to the existing token — no regeneration needed.
+const ACCESS_ROWS = [
+  ['metadata', 'Repo list', 'nothing works without it', 'Metadata: read'],
+  ['dependabot_alerts', 'Dependabot alerts', 'the vulnerability columns', 'Dependabot alerts: read'],
+  ['pull_requests', 'Pull requests', 'PR + CI columns', 'Pull requests: read'],
+  ['contents', 'Contents', 'dependabot.yml detection', 'Contents: read'],
+  ['actions', 'Actions', 'last-scan timestamps', 'Actions: read'],
+  ['administration', 'Administration', 'alerts-enabled / security-updates flags', 'Administration: read'],
+  ['code_scanning', 'Code scanning', 'CodeQL status + analysis times', 'Code scanning alerts: read']
+];
+
+async function loadAccessGrid() {
+  const el = document.getElementById('access-grid');
+  if (!el) return;
+  try {
+    const a = await api('/api/settings/access');
+    el.innerHTML = ACCESS_ROWS.map(([key, label, consequence, perm]) => {
+      const st = a.access[key];
+      const icon = st === 'ok' ? '<span class="ok-text">✓</span>' : st === 'denied' ? '<span class="err-text">✗</span>' : '<span class="muted">?</span>';
+      const fix = st === 'denied'
+        ? ` · <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">add “${perm}” ↗</a>`
+        : '';
+      const note = st === 'ok' ? '' : ` <span class="muted">— missing: ${consequence}${fix}</span>`;
+      return `<div class="access-row">${icon} <strong>${label}</strong>${note}</div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<span class="err-text">Check failed: ${esc(e.message)}</span>`;
+  }
+}
+
+async function postSettingsToken(token) {
+  const res = await fetch('/api/settings/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  });
+  return { ok: res.ok, body: await res.json() };
+}
+
+async function saveToken() {
+  const input = document.getElementById('token-input');
+  const out = document.getElementById('token-result');
+  const btn = document.getElementById('token-save');
+  const token = (input.value || '').trim();
+  if (!token) { out.innerHTML = '<p class="err-text">Paste a token first.</p>'; return; }
+  btn.disabled = true; btn.textContent = 'Validating…';
+  try {
+    const { ok, body } = await postSettingsToken(token);
+    if (!ok) {
+      out.innerHTML = `<p class="err-text">${esc(body.error || 'Failed')}</p>`;
+    } else {
+      input.value = '';
+      out.innerHTML = `<p class="ok-text">Connected as <strong>${esc(body.viewer.login)}</strong>. First scan is running — the patch board fills in shortly.</p>`;
+      setTimeout(() => renderSettings(), 3000); // re-render → access grid re-checks the new token
+    }
+  } catch (e) {
+    out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save & connect';
+  }
+}
+
+async function clearToken() {
+  const { ok, body } = await postSettingsToken('');
+  if (ok) renderSettings();
+  else document.getElementById('token-result').innerHTML = `<p class="err-text">${esc(body.error || 'Failed')}</p>`;
 }

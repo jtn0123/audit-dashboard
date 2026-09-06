@@ -1,0 +1,79 @@
+# Patch Board
+
+Self-hosted, read-only dashboard answering "where do I need to patch things?"
+across every GitHub repo its token can see: Dependabot alerts, update PRs with
+CI verdicts, coverage gaps, scan freshness, risk scores — plus a prioritized,
+machine-readable work queue for agents.
+
+## Security model (read before acting)
+
+- This service is a SENSOR and PLANNER only. It holds a read-only GitHub token
+  and never writes to GitHub. There are no write endpoints.
+- Actions in the queue carry literal `gh` CLI commands. YOU (the agent) execute
+  them with YOUR OWN credentials, subject to your own operator's approval.
+- Data comes from a background cache. Check the `stale` flag; when true, POST
+  /api/gh/refresh first (it blocks until fresh), then re-read: refresh-then-read.
+- CI verdicts are as of the last refresh. Re-verify with `gh pr checks` before
+  merging anything.
+
+## API (all JSON, no auth, LAN-only deployment)
+
+- GET /api/gh/status — token state, last scan, rate limit, freshness. Always answers.
+- GET /api/gh/actions — THE WORK QUEUE. One entry per executable step:
+  {type, repo, pr?, verdict, why, command, preconditions?, policy, policyRule}.
+  Types: merge_pr, close_superseded, enable_alerts, enable_security_updates,
+  add_dependabot_config, flag_pr. Sorted executable-first, then by risk.
+  policy is auto_ok or requires_human, decided by .patchboard-policy.yml
+  (the operator's guardrails; policyRule names the rule). EXECUTE ONLY
+  policy=auto_ok UNATTENDED — requires_human entries are for reporting.
+  Policy is a brake, never an accelerator: it cannot promote past a verdict.
+- GET /api/gh/merge-plan — conflict-aware merge ordering. Per-repo "trains"
+  built from PR file overlap (lockfiles, usually): steps within a train are
+  STRICTLY SEQUENTIAL and each carries its full command sequence including
+  the rebase choreography; separate trains (and repos) run in parallel
+  safely. Prefer this over draining merge_pr entries from /api/gh/actions
+  by hand. Policy stamps apply here too.
+- GET /api/gh/repos?filter=&search=&sort= — full per-repo posture: alerts by
+  severity, Dependabot config state, PRs with CI rollups + verdict inputs,
+  last-scan evidence, gaps, risk (0–100, weights documented in the README).
+- GET /api/gh/prs?kind=dependabot|other|all — every open PR across repos.
+- GET /api/gh/alerts?severity=&repo= — open vulnerability alerts.
+- GET /api/gh/coverage — repos with scanning gaps and what to fix.
+- GET /api/gh/posture — cross-repo security posture: Dependabot, code scanning,
+  secret scanning and push protection per repo. enabled / disabled / unknown are
+  three distinct states — "unknown" means this token cannot read the setting and
+  must never be reported as "off".
+- GET /api/gh/merges?days=&kind= — recently merged PRs (what actually got patched).
+- GET /api/gh/trends?days= — daily series. TWO SOURCES, do not conflate them:
+  `recorded` is the local snapshot history, written once per scan, and is exact
+  but only covers the time since this dashboard first ran. `derived` is
+  reconstructed from the createdAt dates on currently-OPEN alerts and PRs, so it
+  covers the full window but is a FLOOR for past days — anything already fixed
+  is invisible to it. Never present a derived point as the true historical count.
+- GET /api/gh/history?days=&limit= — recorded scans, newest first, each with its
+  delta from the previous scan (alerts, PRs, coverage, and the repos that moved).
+- GET /api/gh/calendar?days= — per-day activity cells for the heatmap.
+- POST /api/gh/refresh — force a rescan; responds when the cache is fresh.
+- GET /api/digest.md — this data as a markdown morning briefing.
+- GET /api/settings — token status (source + masked tail only). POST
+  /api/settings/token sets the dashboard's own read-only GitHub token (the
+  operator's settings page uses this; agents should not). Secrets are
+  write-only: no endpoint ever returns a stored token.
+- GET /api/openapi.json — machine-readable spec of everything above.
+- GET /healthz — liveness. GET /health — health + version + integration state.
+
+## MCP
+
+mcp/server.js in the repo is a dependency-free stdio MCP server wrapping this
+API (tools: get_status, refresh_and_wait, list_actions, get_merge_plan,
+get_repo_posture, list_alerts, get_coverage_gaps, get_security_posture,
+list_merges, get_trends). Point it here with
+PATCHBOARD_URL. The repo's .mcp.json registers it for Claude Code.
+
+## Verdicts
+
+safe_to_merge = bot author + green CI + patch/minor bump. breaking_major =
+major bump (never auto-merge). superseded = a sibling PR bumps the same
+package to an equal-or-newer version (close, don't merge). needs_human =
+human-authored, workflow-touching, or unparseable. red_ci / no_ci / ci_pending
+/ draft = not actionable. Full logic: lib/verdicts.js.
