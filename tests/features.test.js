@@ -110,6 +110,14 @@ describe('groupByAdvisory', () => {
     assert.deepEqual(grouped.map(g => g.package), ['b', 'c', 'a']);
   });
 
+  it('counts unique repositories while retaining each affected manifest', () => {
+    const [group] = posture.groupByAdvisory([
+      repoWith('me/one', [a(), a({ manifest: 'web/package.json' })])
+    ]);
+    assert.equal(group.repoCount, 1);
+    assert.equal(group.repos.length, 2);
+  });
+
   it('falls back to package+summary when an advisory has no identifier', () => {
     const grouped = posture.groupByAdvisory([
       repoWith('me/one', [a({ ghsaId: null, cveId: null })]),

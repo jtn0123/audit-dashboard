@@ -894,14 +894,19 @@ function onPackageSearch(value) {
   clearTimeout(pkgSearchTimer);
   // Debounced: the index is server-side and every keystroke would be a request.
   pkgSearchTimer = setTimeout(async () => {
+    if (routePath() !== '/packages' || $('pkg-search')?.value !== value) return;
     setParams({ q: value });
     try {
       const result = await api(`/api/gh/packages?q=${encodeURIComponent(value)}`);
       const host = $('pkg-results');
-      if (host) host.innerHTML = renderPackageResults(result, value);
+      if (host && routePath() === '/packages' && $('pkg-search')?.value === value) {
+        host.innerHTML = renderPackageResults(result, value);
+      }
     } catch { /* leave the previous results in place */ }
   }, 200);
 }
+
+function packageRepoCount(p) { return new Set(p.repos.map(r => r.repo)).size; }
 
 function renderPackageResults(result, query) {
   if (!result.indexed) {
@@ -920,7 +925,7 @@ function renderPackageResults(result, query) {
       <div class="pkg-head">
         <span class="chip chip-dim">${esc(p.ecosystem)}</span>
         <span class="pkg-name">${esc(p.name)}</span>
-        <span class="pkg-count">${p.repos.length} repo${p.repos.length > 1 ? 's' : ''}</span>
+        <span class="pkg-count">${packageRepoCount(p)} repo${packageRepoCount(p) > 1 ? 's' : ''}</span>
         <button class="refresh-btn small" onclick="copyText(this, ${esc(JSON.stringify(packageMarkdown(p)))})">Copy</button>
       </div>
       <div class="pkg-repos">${p.repos.map(r => {
@@ -933,7 +938,7 @@ function renderPackageResults(result, query) {
 }
 
 function packageMarkdown(p) {
-  return [`## ${p.ecosystem}:${p.name} — ${p.repos.length} repos`,
+  return [`## ${p.ecosystem}:${p.name} — ${packageRepoCount(p)} repos`,
     ...p.repos.map(r => `- [ ] ${r.repo} @ ${r.version || 'unknown'}`)].join('\n');
 }
 

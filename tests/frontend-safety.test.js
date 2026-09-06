@@ -44,3 +44,47 @@ test('read-only frontend has no merge controls or write request', () => {
   assert.equal(spec.paths['/api/gh/merge'], undefined);
   assert.equal(spec.paths['/api/gh/webhook'], undefined);
 });
+
+test('package cards count repositories rather than installed versions', () => {
+  const context = frontend();
+  context.pkg = { ecosystem: 'npm', name: 'pkg', repos: [
+    { repo: 'me/app', version: '1' }, { repo: 'me/app', version: '2' }
+  ] };
+  assert.match(vm.runInContext('packageMarkdown(pkg)', context), /— 1 repos/);
+  assert.match(vm.runInContext('renderPackageResults({indexed:true, results:[pkg]}, "pkg")', context), /class="pkg-count">1 repo</);
+});
+
+test('a slower old package response cannot replace the current query', async () => {
+  const context = frontend();
+  let callback;
+  let resolveRequest;
+  const input = { value: 'old' };
+  const host = { innerHTML: 'current results' };
+  context.window.location = { hash: '#/packages' };
+  context.document.getElementById = id => id === 'pkg-search' ? input : host;
+  context.setTimeout = fn => { callback = fn; };
+  context.clearTimeout = () => {};
+  context.setParams = () => {};
+  context.api = () => new Promise(resolve => { resolveRequest = resolve; });
+  vm.runInContext('onPackageSearch("old")', context);
+  const pending = callback();
+  input.value = 'new';
+  resolveRequest({ indexed: true, results: [] });
+  await pending;
+  assert.equal(host.innerHTML, 'current results');
+});
+
+test('a pending search cannot change another views URL after navigation', async () => {
+  const context = frontend();
+  let callback;
+  let changed = false;
+  context.window.location = { hash: '#/packages' };
+  context.setTimeout = fn => { callback = fn; };
+  context.clearTimeout = () => {};
+  context.setParams = () => { changed = true; };
+  context.api = async () => ({ indexed: true, results: [] });
+  vm.runInContext('onPackageSearch("old")', context);
+  context.window.location.hash = '#/history';
+  await callback();
+  assert.equal(changed, false);
+});
