@@ -33,7 +33,7 @@ const jsAttr = s => esc(
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
 function navigate(path) { window.location.hash = path; }
-function getRoute() { return window.location.hash.slice(1) || '/'; }
+function getRoute() { return (window.location.hash.slice(1) || '/').split('?')[0]; }
 
 async function api(url) {
   const r = await fetch(url);
@@ -176,6 +176,9 @@ const CHART_BASE = {
 // === Router ==============================================================
 
 const ROUTES = [
+  { path: '/advisories', nav: 'nav-advisories', render: () => renderAdvisories() },
+  { path: '/packages', nav: 'nav-packages', render: () => renderPackages() },
+  { path: '/timeline', nav: 'nav-timeline', render: () => renderTimeline() },
   { path: '/', nav: 'nav-patch', render: () => renderPatch() },
   { path: '/patch', nav: 'nav-patch', render: () => renderPatch() },
   { path: '/prs', nav: 'nav-prs', render: () => renderPrs() },

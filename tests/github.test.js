@@ -65,6 +65,33 @@ function fakeResponse({ status = 200, body = {}, headers = {} } = {}) {
 }
 
 describe('github client', () => {
+  it('refreshes legacy cache entries that lack pagination metadata', async () => {
+    const client = new GitHubClient({
+      etags: { 'GET https://api.github.com/items': { etag: 'old', data: [1] } },
+      fetchImpl: async (_url, opts) => {
+        assert.equal(opts.headers['if-none-match'], undefined);
+        return fakeResponse({ body: [1], headers: { etag: 'new' } });
+      }
+    });
+    assert.deepEqual(await client.paginate('/items'), [1]);
+    assert.equal(client.etags['GET https://api.github.com/items'].nextUrl, null);
+  });
+
+  it('retains pagination links when cached pages return header-only 304s', async () => {
+    let calls = 0;
+    const client = new GitHubClient({ fetchImpl: async () => {
+      calls++;
+      if (calls > 2) return fakeResponse({ status: 304 });
+      return fakeResponse({ body: [calls], headers: {
+        etag: `page-${calls}`,
+        ...(calls === 1 ? { link: '<https://api.github.com/items?page=2>; rel="next"' } : {})
+      } });
+    } });
+    assert.deepEqual(await client.paginate('/items'), [1, 2]);
+    assert.deepEqual(await client.paginate('/items'), [1, 2]);
+    assert.equal(calls, 4);
+  });
+
   it('parses rel="next" out of Link headers', () => {
     const link = '<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=9>; rel="last"';
     assert.equal(parseNextLink(link), 'https://api.github.com/x?page=2');
@@ -345,8 +372,22 @@ function fakeGitHub() {
         ]);
       }
       if (rest.startsWith('/actions/runs')) {
-        seen.dependabotRunEvents.push(searchParams.get('event'));
-        return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
+        // Two callers hit this path: the Dependabot-run lookup (event=dynamic)
+        // and the default-branch CI check (branch=...). Only record the former.
+        const event = searchParams.get('event');
+        if (event) {
+          seen.dependabotRunEvents.push(event);
+          return json({ workflow_runs: full === 'me/covered' ? [{ created_at: ago(1) }] : [] });
+        }
+        return json({
+          workflow_runs: [{
+            status: 'completed',
+            conclusion: full === 'me/naked' ? 'failure' : 'success',
+            name: 'ci',
+            html_url: `https://github.com/${full}/actions/runs/1`,
+            updated_at: ago(1)
+          }]
+        });
       }
       if (rest.startsWith('/code-scanning/analyses')) {
         // me/naked: the token cannot look (missing "Code scanning alerts"
@@ -369,7 +410,7 @@ describe('collector end-to-end', () => {
   it('builds a full patch board from GitHub responses', async () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
     const cacheFile = path.join(cacheDir, 'cache.json');
-    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: cacheFile, GH_AUTO_REFRESH: 'false' });
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: cacheFile, GH_HISTORY_FILE: path.join(cacheDir, 'history.jsonl'), GH_AUTO_REFRESH: 'false' });
     const { fetchImpl, seen } = fakeGitHub();
     // Fixed clock so ages, stale-scan gaps and risk stay deterministic forever.
     const collector = new Collector(config, { fetchImpl, now: () => NOW });
@@ -438,7 +479,7 @@ describe('collector end-to-end', () => {
 
   it('ignores query params that name inherited Object properties', async () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
-    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_HISTORY_FILE: path.join(cacheDir, 'history.jsonl'), GH_AUTO_REFRESH: 'false' });
     const collector = new Collector(config, { fetchImpl: fakeGitHub().fetchImpl, now: () => NOW });
     await collector.refresh();
 
@@ -458,7 +499,7 @@ describe('collector end-to-end', () => {
     let userCalls = 0;
     const { fetchImpl: inner } = fakeGitHub();
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
-    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_HISTORY_FILE: path.join(cacheDir, 'history.jsonl'), GH_AUTO_REFRESH: 'false' });
     const collector = new Collector(config, {
       fetchImpl: async (url, opts) => {
         if (new URL(url).pathname === '/user') userCalls++;
@@ -472,7 +513,7 @@ describe('collector end-to-end', () => {
 
   it('keeps healthy repos when one repo blows up mid-collection', async () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghtest-'));
-    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_AUTO_REFRESH: 'false' });
+    const config = loadConfig({ GITHUB_TOKEN: 'x', GH_CACHE_FILE: path.join(cacheDir, 'cache.json'), GH_HISTORY_FILE: path.join(cacheDir, 'history.jsonl'), GH_AUTO_REFRESH: 'false' });
     const { fetchImpl: inner } = fakeGitHub();
     const collector = new Collector(config, {
       now: () => NOW,

@@ -15,17 +15,27 @@ Runs on your own network. No data leaves the box except read-only calls to GitHu
 | View | What it answers |
 |------|-----------------|
 | **Patch board** (`/`) | One row per repo: Dependabot state, open alerts by severity, open PRs, last scan, and the single next action. Sorted by risk. |
+| **Advisories** (`/#/advisories`) | One row per advisory instead of per repo: how many repos a single CVE hits, how old the oldest instance is, and a copyable list of every repo to patch. |
+| **Packages** (`/#/packages`) | "A CVE just dropped — do I even use this?" Searches every repo's dependency graph, so it answers before an alert exists and covers packages that never get one. |
 | **Pull requests** (`/#/prs`) | Every open PR across every repo — Dependabot updates and human PRs — with CI status and age. |
 | **Findings** (`/#/findings`) | Every open Dependabot alert across every repo, searchable and groupable by package — one package causing five alerts shows as one row. |
 | **Coverage** (`/#/coverage`) | Repos with no `dependabot.yml`, alerts disabled, security updates off, or a stale scan — each with a one-click fix link. |
+| **Timeline** (`/#/timeline`) | Alerts, coverage and PR counts over time — one snapshot per successfully recorded scan, so you can see whether the portfolio is getting better. |
 | **Posture** (`/#/posture`) | Wider than Dependabot: code scanning, secret scanning and push protection per repo. Distinguishes *off* from *not visible to this token*. |
 | **Trends** (`/#/trends`) | Alert backlog and patch activity over time. Is the backlog growing faster than you patch it? |
 | **History** (`/#/history`) | What actually got patched — merged pull requests by day — plus the log of every scan this dashboard has run. |
 | **Calendar** (`/#/calendar`) | 13-week heatmap of alerts raised, PRs opened and updates merged. Click a day for what happened. |
 
 Each repo row expands to show the actual advisories (package, severity, fixed version),
-the update PRs with their CI verdict, and — for repos with nothing configured — a
-ready-to-commit `dependabot.yml` with a link that opens GitHub's file editor pre-filled.
+secret- and code-scanning alerts, dismissed alerts and why they were dismissed, the update
+PRs with their CI verdict, and — for repos with nothing configured — a ready-to-commit
+`dependabot.yml` with a link that opens GitHub's file editor pre-filled.
+
+The board also remembers what it looked like last time you opened it: a banner names what
+moved since your last visit, and each row carries a sparkline of its alert count.
+
+**Keyboard:** `/` search · `j`/`k` move · `Enter` expand · `o` open on GitHub · `r` rescan ·
+`?` help. Filters, sort and search live in the URL, so any view of the board is a bookmark.
 
 ### Where "history" comes from
 
@@ -67,13 +77,30 @@ A **fine-grained PAT**, read-only, with these repository permissions:
 | Dependabot alerts: Read | Open vulnerability alerts |
 | Pull requests: Read | Open PRs + CI status |
 | Contents: Read | Detect `.github/dependabot.yml` |
-| Actions: Read | "Last Dependabot run" timestamp |
+| Actions: Read | "Last Dependabot run" timestamp, default-branch CI health |
 | Administration: Read | Whether alerts / security updates are enabled |
+| Code scanning alerts: Read | CodeQL findings as board rows *(optional)* |
+| Secret scanning alerts: Read | Leaked credentials as board rows *(optional)* |
 
-A classic PAT with `repo` + `security_events` also works, but prefer the fine-grained one:
-the classic `repo` scope grants full **read/write** access to all your repositories, far more
-than this dashboard needs. The dashboard itself only ever issues read requests — it never
-writes to GitHub — but a leaked classic token would.
+Only read-only fine-grained PATs are supported. Do not supply a classic PAT or grant
+write permissions: classic repository scope includes write access. This applies to both
+environment variables and the Settings page. The dashboard only issues read requests to GitHub; agents execute
+recommended commands externally using their own credentials.
+
+The optional scopes degrade quietly: without them the extra collectors report an error for
+that repo and the rest of the board still works. Turn a collector off entirely with its
+`GH_COLLECT_*` flag if you'd rather not grant the scope at all.
+
+### Read-only boundary
+
+There is no GitHub merge endpoint or inbound webhook listener. The board emits commands
+and merge plans; agents verify and execute those outside the dashboard. Keep this service
+LAN-only with read-only credentials. Webhooks require a separate deployment decision.
+
+The dashboard does not authenticate viewers itself. The default container port binds
+only to loopback. Before exposing it on a LAN or the internet, put an authenticated
+reverse proxy in front of it and firewall direct access to the backend. CORS is not
+authentication: any client able to reach the backend can read its cached inventory.
 
 ## Configuration
 
@@ -93,6 +120,17 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_MAX_REPOS` | `300` | Safety cap |
 | `GH_AUTO_REFRESH` | `true` | `false` = only refresh via the Rescan button |
 | `GH_CACHE_FILE` | `.cache/github.json` | Warm cache + ETag store |
+| `GH_SLA_CRITICAL_DAYS` | `7` | Age budget: a critical alert older than this is flagged |
+| `GH_SLA_HIGH_DAYS` | `30` | Age budget for high |
+| `GH_SLA_MEDIUM_DAYS` | `90` | Age budget for medium |
+| `GH_SLA_LOW_DAYS` | `180` | Age budget for low |
+| `GH_COLLECT_CODE_SCANNING` | `true` | Fetch open code-scanning (CodeQL) alerts |
+| `GH_COLLECT_SECRET_SCANNING` | `true` | Fetch open secret-scanning alerts |
+| `GH_COLLECT_CI` | `true` | Fetch default-branch CI conclusion |
+| `GH_COLLECT_DOCKERFILES` | `true` | Look for Dockerfiles not covered by a `docker` ecosystem |
+| `GH_COLLECT_DISMISSED` | `true` | Fetch dismissed alerts and their stated reason |
+| `GH_COLLECT_SBOM` | `true` | Fetch each repo's dependency graph for the package search |
+| `GH_MAX_PACKAGES_PER_REPO` | `3000` | Cap on SBOM entries indexed per repo |
 | `GH_HISTORY_FILE` | next to the cache | Scan-snapshot series behind Trends / History / Calendar |
 | `GH_HISTORY_DAYS` | `180` | How long snapshots are kept (floor: 7) |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
@@ -119,10 +157,15 @@ Risk drives the default sort, so the top of the table is where to start:
 ```text
 40 × critical alerts + 18 × high + 5 × medium + 1 × low
 + 35  Dependabot alerts disabled      (nothing is scanning this repo)
++ 30  open secret-scanning alerts     (a live credential is exposed)
 + 18  no dependabot.yml               (no version-update PRs)
++ 15  an alert past its age budget
 + 12  never scanned
++ 12  default-branch CI failing       (update PRs can't merge safely)
 + 10  security updates off
++ 10  open code-scanning alerts
 + 10  scan older than GH_STALE_DAYS
++ 8   Dockerfile with no docker ecosystem
 + 3   per Dependabot PR open >14 days (max 10)
 ```
 
@@ -131,10 +174,15 @@ merely lacks a config — one is exploitable today, the other is a process gap.
 
 ## Rate limits
 
-A 30-repo account costs roughly 200 API calls per refresh on a cold cache. Every request
-uses conditional ETags, so subsequent refreshes cost close to nothing for repos that haven't
-changed. At the default 30-minute interval you'll use a small fraction of the 5,000/hour
-limit. Remaining quota is shown in the header.
+A 30-repo account costs roughly 300 API calls per refresh on a cold cache with every
+collector on. Most requests use conditional ETags, so subsequent refreshes cost close to
+nothing for repos that haven't changed. The one exception is the dependency-graph SBOM,
+which is deliberately fetched without an ETag — the payloads are megabytes and caching them
+would cost more memory than the requests save. Turn it off with `GH_COLLECT_SBOM=false` if
+you don't want the package search; the same goes for each other `GH_COLLECT_*` flag.
+
+At the default 30-minute interval you'll use a small fraction of the 5,000/hour limit.
+Remaining quota is shown in the header.
 
 ## API
 
@@ -145,6 +193,10 @@ limit. Remaining quota is shown in the header.
 | `GET` | `/api/gh/repos` | Full posture per repo — `?filter=`, `?search=`, `?sort=` |
 | `GET` | `/api/gh/prs` | All open PRs — `?kind=dependabot\|other\|all` |
 | `GET` | `/api/gh/alerts` | All open alerts — `?severity=`, `?repo=` |
+| `GET` | `/api/gh/advisories` | Alerts pivoted to one row per advisory — `?severity=`, `?minRepos=` |
+| `GET` | `/api/gh/packages` | Cross-repo dependency-graph search — `?q=` |
+| `GET` | `/api/gh/snapshots` | Snapshot series for Timeline and sparklines |
+| `GET` | `/api/gh/changes` | What moved — `?since=` (ISO timestamp, required) |
 | `GET` | `/api/gh/coverage` | Repos with setup gaps |
 | `GET` | `/api/gh/posture` | Cross-repo scanning posture — on / off / not visible, kept distinct |
 | `GET` | `/api/gh/merges` | Recently merged PRs — `?days=`, `?kind=` |
@@ -203,6 +255,10 @@ edit → push → redeploy. Override the path with `PATCHBOARD_POLICY_FILE`.
 └── tests/                 # node --test; the collector is tested against a fake GitHub
 ```
 
+Two runtime dependencies: `express`, and `express-rate-limit` for the two routes that make
+an authorization decision. Everything else — the GitHub client, the charts, the sparklines —
+is written against the standard library and the DOM, with no build step.
+
 The collector polls on a timer and writes to a disk cache; the HTTP API only ever reads that
 cache, so the UI never blocks on GitHub and a rate-limit hiccup shows stale data rather than
 an error page. `lib/posture.js` is pure functions — all the scoring rules are unit-tested
@@ -213,7 +269,7 @@ without touching the network.
 ```bash
 npm install
 GITHUB_TOKEN=ghp_xxx npm start        # http://localhost:3002
-npm test                              # 53 tests, no network required
+npm test                              # 90 tests, no network required
 npm run test:coverage                 # writes coverage/lcov.info
 npm run lint
 ```

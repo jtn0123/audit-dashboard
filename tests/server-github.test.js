@@ -75,20 +75,42 @@ function fakeGitHubServer() {
       }
       if (rest.startsWith('/actions/runs')) return send({ workflow_runs: [{ created_at: ago(1) }] });
       if (rest.startsWith('/code-scanning/analyses')) return send({ message: 'no analysis found' }, 404);
+      if (rest.startsWith('/code-scanning/alerts')) return send([]);
+      if (rest.startsWith('/secret-scanning/alerts')) return send([]);
+      if (rest.startsWith('/dependency-graph/sbom')) {
+        return send({
+          sbom: {
+            packages: [
+              { name: `com.github.${full}`, versionInfo: '1' },
+              { name: 'npm:thing', versionInfo: '2.0.0' },
+              { name: 'npm:shared', versionInfo: '1.0.0' }
+            ]
+          }
+        });
+      }
       if (rest.includes('/check-runs')) return send({ check_runs: [{ status: 'completed', conclusion: 'success' }] });
     }
     send({ message: 'Not Found' }, 404);
   });
 }
 
-function request(port, urlPath, method = 'GET') {
+function request(port, urlPath, method = 'GET', { body, headers } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, { method }, (res) => {
-      let body = '';
-      res.on('data', c => body += c);
-      res.on('end', () => resolve({ status: res.statusCode, json: body ? JSON.parse(body) : null }));
+    const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
+    const options = {
+      method,
+      headers: {
+        ...(payload == null ? {} : { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }),
+        ...headers
+      }
+    };
+    const req = http.request(`http://127.0.0.1:${port}${urlPath}`, options, (res) => {
+      let text = '';
+      res.on('data', c => text += c);
+      res.on('end', () => resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null }));
     });
     req.on('error', reject);
+    if (payload != null) req.write(payload);
     req.end();
   });
 }
@@ -105,6 +127,8 @@ before(async () => {
   process.env.GH_CACHE_FILE = path.join(cacheDir, 'cache.json');
   process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
   process.env.GH_AUTO_REFRESH = 'false';
+  process.env.GH_ALLOW_WRITES = 'true';
+  process.env.GH_WEBHOOK_SECRET = 'test-only-no-listener';
   process.env.PORT = '0';
 
   const express = require('express');
@@ -268,6 +292,63 @@ describe('GitHub API tests (configured)', () => {
     const r = await request(port, '/health');
     assert.equal(r.json.github.configured, true);
     assert.equal(r.json.github.repoCount, 2);
+  });
+
+  it('GET /api/gh/advisories pivots alerts to one row per advisory', async () => {
+    const r = await request(port, '/api/gh/advisories');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.length, 1);
+    assert.equal(r.json[0].ghsaId, 'GHSA-x');
+    assert.equal(r.json[0].repoCount, 1);
+    assert.deepEqual(r.json[0].repos.map(x => x.repo), ['me/covered']);
+
+    assert.equal((await request(port, '/api/gh/advisories?severity=low')).json.length, 0);
+    assert.equal((await request(port, '/api/gh/advisories?minRepos=2')).json.length, 0);
+  });
+
+  it('GET /api/gh/packages searches the dependency graph across repos', async () => {
+    const r = await request(port, '/api/gh/packages?q=shared');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.indexed, true);
+    assert.equal(r.json.results.length, 1);
+    // Both repos report the package, so both should be listed.
+    assert.deepEqual(r.json.results[0].repos.map(x => x.repo).sort(), ['me/covered', 'me/naked']);
+    // The SPDX entry describing the repo itself is not a dependency.
+    assert.equal(r.json.results.some(p => p.name.startsWith('com.github.')), false);
+
+    const empty = await request(port, '/api/gh/packages');
+    assert.deepEqual(empty.json.results, []);
+    assert.ok(empty.json.count >= 2);
+  });
+
+  it('GET /api/gh/snapshots returns a snapshot per scan', async () => {
+    const r = await request(port, '/api/gh/snapshots');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.length >= 1);
+    const latest = r.json[r.json.length - 1];
+    assert.equal(latest.repos, 2);
+    assert.equal(latest.critical, 1);
+    assert.equal(latest.byRepo['me/covered'], 1);
+  });
+
+  it('GET /api/gh/changes needs a timestamp and reports nothing on a single scan', async () => {
+    const missing = await request(port, '/api/gh/changes');
+    assert.equal(missing.status, 400);
+
+    const r = await request(port, `/api/gh/changes?since=${encodeURIComponent(ago(1))}`);
+    assert.equal(r.status, 200);
+    // One scan means no baseline to compare against yet.
+    assert.equal(r.json.changes, null);
+  });
+
+  it('keeps merge and webhook routes absent even with legacy opt-in flags', async () => {
+    for (const route of ['/api/gh/merge', '/api/gh/webhook']) {
+      const response = await request(port, route, 'POST', { body: { repo: 'me/covered', number: 7 } });
+      assert.equal(response.status, 404);
+      assert.match(response.json.error, /No such endpoint/);
+    }
+    const prs = await request(port, '/api/gh/prs?kind=dependabot');
+    assert.deepEqual(prs.json.map(pr => pr.number), [7]);
   });
 });
 
