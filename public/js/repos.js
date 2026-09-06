@@ -154,7 +154,7 @@ function renderChangesBanner() {
   if (!bits.length) return '';
 
   const movers = (c.repos || []).slice(0, 3)
-    .map(r => `${esc(r.repo.split('/')[1])} ${r.delta > 0 ? '+' : ''}${r.delta}`).join(' · ');
+    .map(r => `${r.repo.split('/')[1]} ${r.delta > 0 ? '+' : ''}${r.delta}`).join(' · ');
   return `<div class="changes-banner">
     <span class="changes-label">Since your last visit (${relTime(c.since)})</span>
     ${bits.join('<span class="bullet">·</span>')}
@@ -308,7 +308,7 @@ function renderControls() {
           onclick="setRepoSort('${s.key}')">${s.label}</button>`).join('')}
       </div>
       <button class="refresh-btn small" onclick="copyText(this, boardMarkdown())" title="Copy this view as a Markdown checklist">Copy list</button>
-      <button class="refresh-btn small" onclick="toggleShortcutHelp()" title="Keyboard shortcuts">?</button>
+      <button class="refresh-btn small shortcut-help-trigger" onclick="toggleShortcutHelp()" title="Keyboard shortcuts">?</button>
     </div>
   </div>`;
 }
@@ -553,7 +553,7 @@ function renderRepoDetail(r) {
       <a href="${esc(r.url)}/security/dependabot" target="_blank" rel="noopener">Dependabot alerts ↗</a>
       <a href="${esc(r.url)}/pulls" target="_blank" rel="noopener">Pull requests ↗</a>
       <a href="${esc(r.url)}/settings/security_analysis" target="_blank" rel="noopener">Security settings ↗</a>
-      ${r.ci ? `<a href="${esc(r.ci.url || `${r.url}/actions`)}" target="_blank" rel="noopener" class="tone-${r.ci.state === 'failing' ? 'critical' : 'ok'}">${r.ci.branch} CI: ${r.ci.state} ↗</a>` : ''}
+      ${r.ci ? `<a href="${esc(r.ci.url || `${r.url}/actions`)}" target="_blank" rel="noopener" class="tone-${r.ci.state === 'failing' ? 'critical' : 'ok'}">${esc(r.ci.branch)} CI: ${esc(r.ci.state)} ↗</a>` : ''}
       ${r.packageCount ? `<span class="muted">${r.packageCount} packages indexed</span>` : ''}
       ${r.codeScanning?.lastAnalysisAt ? `<span class="muted">code scanning: ${relTime(r.codeScanning.lastAnalysisAt)}</span>` : ''}
     </div>
@@ -622,7 +622,7 @@ function copyText(btn, text) {
 function boardMarkdown() {
   const q = repoSearch.trim().toLowerCase();
   let repos = ghState.repos.filter(r => matchesFilter(r, repoFilterKey));
-  if (q) repos = repos.filter(r => r.fullName.toLowerCase().includes(q));
+  if (q) repos = repos.filter(r => r.fullName.toLowerCase().includes(q) || (r.language || '').toLowerCase().includes(q));
   repos = sortRepos(repos);
 
   const s = ghState.overview?.summary;
@@ -667,6 +667,10 @@ function handleShortcut(event) {
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.key === 'Escape') {
+    document.getElementById('shortcut-help')?.remove();
+    return;
+  }
 
   const rows = [...document.querySelectorAll('.repo-row')];
   switch (event.key) {
@@ -727,7 +731,7 @@ function renderSetupScreen() {
       <li>Create a fine-grained PAT with <strong>Repository permissions → Metadata: Read</strong>,
           <strong>Dependabot alerts: Read</strong>, <strong>Pull requests: Read</strong>,
           <strong>Contents: Read</strong>, <strong>Actions: Read</strong>, <strong>Administration: Read</strong>
-          (a classic PAT with <code>repo</code> + <code>security_events</code> works too).</li>
+          — all permissions must be read-only. Do not use a classic PAT.</li>
       <li>Paste it on the <a href="#/settings" onclick="navigate('/settings');return false"><strong>Settings page</strong></a> — no restart needed.</li>
     </ol>
     <p class="muted">(Setting <code>GITHUB_TOKEN</code> in the environment still works too.)</p>
@@ -956,7 +960,7 @@ async function renderTimeline() {
   if (!rows || rows.length < 2) {
     app.innerHTML = `${timelineHeader(rows?.length || 0)}
       <div class="empty"><div class="icon">📈</div><h3>Not enough history yet</h3>
-      <p>A snapshot is recorded on every scan. Come back after a few refreshes — or lower
+      <p>A snapshot is created per successfully recorded scan. Come back after a few refreshes — or lower
       <code>GH_REFRESH_MINUTES</code> to build the picture faster.</p></div>`;
     return;
   }
@@ -1186,7 +1190,7 @@ async function renderSettings() {
       </ol>
 
       <div class="settings-row">
-        <input type="password" id="token-input" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+        <input type="password" id="token-input" placeholder="Read-only fine-grained PAT (github_pat_…)" autocomplete="off" spellcheck="false">
         <button class="refresh-btn" id="token-save" onclick="saveToken()">Save & connect</button>
       </div>
       <div id="token-result"></div>

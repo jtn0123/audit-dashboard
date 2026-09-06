@@ -96,7 +96,7 @@ function requireGitHub(req, res, next) {
   if (!ghConfig.enabled) {
     return res.status(503).json({
       error: 'GitHub integration not configured',
-      hint: 'Set GITHUB_TOKEN (a PAT with repo + security_events scope) and restart.'
+      hint: 'Set GITHUB_TOKEN to a read-only fine-grained PAT and restart.'
     });
   }
   next();
@@ -195,7 +195,7 @@ app.post('/api/settings/token', express.json({ limit: '4kb' }), async (req, res)
   }
 
   if (!looksLikeGitHubToken(token)) {
-    return res.status(400).json({ error: 'That does not look like a GitHub token (expected ghp_/github_pat_/gho_… format).' });
+    return res.status(400).json({ error: 'That does not look like a GitHub token. Supply a read-only fine-grained PAT (github_pat_…).' });
   }
 
   // Prove the token works before accepting it.

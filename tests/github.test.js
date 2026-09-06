@@ -65,6 +65,33 @@ function fakeResponse({ status = 200, body = {}, headers = {} } = {}) {
 }
 
 describe('github client', () => {
+  it('refreshes legacy cache entries that lack pagination metadata', async () => {
+    const client = new GitHubClient({
+      etags: { 'GET https://api.github.com/items': { etag: 'old', data: [1] } },
+      fetchImpl: async (_url, opts) => {
+        assert.equal(opts.headers['if-none-match'], undefined);
+        return fakeResponse({ body: [1], headers: { etag: 'new' } });
+      }
+    });
+    assert.deepEqual(await client.paginate('/items'), [1]);
+    assert.equal(client.etags['GET https://api.github.com/items'].nextUrl, null);
+  });
+
+  it('retains pagination links when cached pages return header-only 304s', async () => {
+    let calls = 0;
+    const client = new GitHubClient({ fetchImpl: async () => {
+      calls++;
+      if (calls > 2) return fakeResponse({ status: 304 });
+      return fakeResponse({ body: [calls], headers: {
+        etag: `page-${calls}`,
+        ...(calls === 1 ? { link: '<https://api.github.com/items?page=2>; rel="next"' } : {})
+      } });
+    } });
+    assert.deepEqual(await client.paginate('/items'), [1, 2]);
+    assert.deepEqual(await client.paginate('/items'), [1, 2]);
+    assert.equal(calls, 4);
+  });
+
   it('parses rel="next" out of Link headers', () => {
     const link = '<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=9>; rel="last"';
     assert.equal(parseNextLink(link), 'https://api.github.com/x?page=2');

@@ -32,6 +32,46 @@ test('advisory copy treats HTML entities and quotes as literal data', () => {
   assert.ok(context.copied.includes(payload));
 });
 
+test('CI branch and state render as text rather than HTML', () => {
+  const context = frontend();
+  context.repo = {
+    gaps: [], alerts: { list: [] }, prs: { dependabot: [], other: [] },
+    dependabot: { configPresent: true }, url: 'https://github.com/me/app',
+    ci: { branch: '<img/src=x/onerror=alert(1)>', state: '<svg/onload=alert(2)>' }
+  };
+  const html = vm.runInContext('renderRepoDetail(repo)', context);
+  assert.ok(html.includes('&lt;img/src=x/onerror=alert(1)&gt;'));
+  assert.ok(html.includes('&lt;svg/onload=alert(2)&gt;'));
+  assert.ok(!html.includes('<img'));
+  assert.ok(!html.includes('<svg'));
+});
+
+test('changes banner escapes repository labels exactly once', () => {
+  const context = frontend();
+  vm.runInContext('ghState.changes = { since: new Date().toISOString(), alerts: 1, repos: [{ repo: "me/a&b", delta: 1 }] }', context);
+  const html = vm.runInContext('renderChangesBanner()', context);
+  assert.ok(html.includes('a&amp;b'));
+  assert.ok(!html.includes('a&amp;amp;b'));
+});
+
+test('copied board includes repositories matching the visible language search', () => {
+  const context = frontend();
+  vm.runInContext(`repoSearch = 'python'; repoFilterKey = 'all'; ghState.repos = [{
+    fullName: 'me/app', language: 'Python', alerts: {counts: {total: 0}, list: []},
+    prs: {counts: {dependabot: 0}}, action: {text: 'Check'}
+  }];`, context);
+  assert.match(vm.runInContext('boardMarkdown()', context), /me\/app/);
+});
+
+test('Escape closes shortcut help without querying table rows', () => {
+  const context = frontend();
+  let removed = false;
+  context.document.getElementById = () => ({ remove() { removed = true; } });
+  context.event = { key: 'Escape', target: { tagName: 'BODY' } };
+  vm.runInContext('handleShortcut(event)', context);
+  assert.ok(removed);
+});
+
 test('read-only frontend has no merge controls or write request', () => {
   const context = frontend();
   for (const name of ['mergeSelected', 'selectAllGreen', 'togglePrSelection', 'renderMergeBar']) {

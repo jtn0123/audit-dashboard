@@ -686,5 +686,5 @@ a:focus-visible, button:focus-visible, input:focus-visible,
   .repo-head, .repo-row { grid-template-columns: 1fr 1fr; }
   .repo-trend { display: none; }
   .advisory-summary { min-width: 0; }
-  .shortcut-help { display: none; }
+  .shortcut-help, .shortcut-help-trigger { display: none; }
 }

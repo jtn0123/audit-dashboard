@@ -20,7 +20,7 @@ Runs on your own network. No data leaves the box except read-only calls to GitHu
 | **Pull requests** (`/#/prs`) | Every open PR across every repo — Dependabot updates and human PRs — with CI status and age. |
 | **Findings** (`/#/findings`) | Every open Dependabot alert across every repo, searchable and groupable by package — one package causing five alerts shows as one row. |
 | **Coverage** (`/#/coverage`) | Repos with no `dependabot.yml`, alerts disabled, security updates off, or a stale scan — each with a one-click fix link. |
-| **Timeline** (`/#/timeline`) | Alerts, coverage and PR counts over time — one snapshot per scan, so you can see whether the portfolio is getting better. |
+| **Timeline** (`/#/timeline`) | Alerts, coverage and PR counts over time — one snapshot per successfully recorded scan, so you can see whether the portfolio is getting better. |
 | **Posture** (`/#/posture`) | Wider than Dependabot: code scanning, secret scanning and push protection per repo. Distinguishes *off* from *not visible to this token*. |
 | **Trends** (`/#/trends`) | Alert backlog and patch activity over time. Is the backlog growing faster than you patch it? |
 | **History** (`/#/history`) | What actually got patched — merged pull requests by day — plus the log of every scan this dashboard has run. |
@@ -82,9 +82,9 @@ A **fine-grained PAT**, read-only, with these repository permissions:
 | Code scanning alerts: Read | CodeQL findings as board rows *(optional)* |
 | Secret scanning alerts: Read | Leaked credentials as board rows *(optional)* |
 
-A classic PAT with `repo` + `security_events` also works, but prefer the fine-grained one:
-the classic `repo` scope grants full **read/write** access to all your repositories, far more
-than this dashboard needs. The dashboard only issues read requests to GitHub; agents execute
+Only read-only fine-grained PATs are supported. Do not supply a classic PAT or grant
+write permissions: classic repository scope includes write access. This applies to both
+environment variables and the Settings page. The dashboard only issues read requests to GitHub; agents execute
 recommended commands externally using their own credentials.
 
 The optional scopes degrade quietly: without them the extra collectors report an error for
@@ -96,6 +96,11 @@ that repo and the rest of the board still works. Turn a collector off entirely w
 There is no GitHub merge endpoint or inbound webhook listener. The board emits commands
 and merge plans; agents verify and execute those outside the dashboard. Keep this service
 LAN-only with read-only credentials. Webhooks require a separate deployment decision.
+
+The dashboard does not authenticate viewers itself. The default container port binds
+only to loopback. Before exposing it on a LAN or the internet, put an authenticated
+reverse proxy in front of it and firewall direct access to the backend. CORS is not
+authentication: any client able to reach the backend can read its cached inventory.
 
 ## Configuration
 

@@ -13,6 +13,25 @@ const DAY = 86_400_000;
 const NOW = Date.parse('2026-06-01T00:00:00Z');
 const ago = days => new Date(NOW - days * DAY).toISOString();
 
+it('changes include added and removed repositories', () => {
+  const { changesSince } = require('../lib/history-views');
+  const row = { critical: 0, high: 0, alerts: 0, dependabotPrs: 0 };
+  const changes = changesSince([
+    { ...row, at: ago(2), byRepo: { 'me/removed': 3, 'me/unchanged': 1 } },
+    { ...row, at: ago(0), byRepo: { 'me/added': 2, 'me/unchanged': 1 } }
+  ], ago(1));
+  assert.deepEqual(changes.repos, [
+    { repo: 'me/added', before: 0, after: 2, delta: 2 },
+    { repo: 'me/removed', before: 3, after: 0, delta: -3 }
+  ]);
+});
+
+it('OpenAPI exposes every new repository filter', () => {
+  const { spec } = require('../lib/openapi');
+  const filters = spec.paths['/api/gh/repos'].get.parameters.find(p => p.name === 'filter').schema.enum;
+  for (const filter of ['sla', 'secrets', 'ci-failing']) assert.ok(filters.includes(filter));
+});
+
 const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pbfeat-'));
 
 // Anything that builds a Collector must write its cache and history somewhere
@@ -321,6 +340,44 @@ describe('history', () => {
 // === read models =========================================================
 
 describe('collector read models', () => {
+  it('distinguishes unavailable SBOMs from a successful empty graph', async () => {
+    const c = new Collector(loadConfig(scratchEnv()), { fetchImpl: async () => {} });
+    for (const data of [null, {}, { sbom: { packages: 'invalid' } }]) {
+      c.client.get = async () => data;
+      assert.equal(await c.fetchPackages('me/app', []), null);
+    }
+    c.client.get = async () => { throw new Error('unavailable'); };
+    const errors = [];
+    assert.equal(await c.fetchPackages('me/app', errors), null);
+    assert.equal(errors[0].scope, 'sbom');
+    c.client.get = async () => ({ sbom: { packages: [] } });
+    assert.deepEqual(await c.fetchPackages('me/app', []), []);
+  });
+
+  it('only marks complete enabled SBOM collection as indexed', async () => {
+    const c = new Collector(loadConfig(scratchEnv()), { fetchImpl: async () => {} });
+    c.client.get = async () => ({ login: 'me' });
+    const selected = [{ full_name: 'me/app', name: 'app' }];
+    c.discoverRepos = async () => selected;
+    let indexed = false;
+    c.collectRepo = async repo => {
+      if (indexed) c.packagesByRepo.set(repo.full_name, []);
+      return posture.buildRepoPosture({ repo }, { now: NOW });
+    };
+    await c.refresh();
+    assert.equal(c.searchPackages('').indexed, false);
+    indexed = true;
+    await c.refresh();
+    assert.equal(c.searchPackages('').indexed, true);
+    c.config.collectSbom = false;
+    await c.refresh();
+    assert.equal(c.searchPackages('').indexed, false);
+    c.config.collectSbom = true;
+    c.discoverRepos = async () => [];
+    await c.refresh();
+    assert.equal(c.searchPackages('').indexed, false);
+  });
+
   const collector = () => {
     const c = new Collector(loadConfig(scratchEnv()), { fetchImpl: async () => {} });
     c.state.advisories = [
