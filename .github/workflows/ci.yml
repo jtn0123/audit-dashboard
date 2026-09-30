@@ -15,7 +15,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          # Match the runtime the Dockerfile ships, not an older LTS.
+          node-version: 26
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run lint
+
+  # Unit tests run in a roomy process with an empty cache. This boots the real
+  # image under docker-compose.yml's limits with warm caches up to and past the
+  # load limit: the scenario that OOM-killed production on every boot for 24
+  # days in 2026-09 while every other check stayed green.
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/smoke-container.sh
