@@ -133,6 +133,7 @@ All optional except `GITHUB_TOKEN`. See `.env.example`.
 | `GH_MAX_PACKAGES_PER_REPO` | `3000` | Cap on SBOM entries indexed per repo |
 | `GH_HISTORY_FILE` | next to the cache | Scan-snapshot series behind Trends / History / Calendar |
 | `GH_HISTORY_DAYS` | `180` | How long snapshots are kept (floor: 7) |
+| `GH_CACHE_MAX_MB` | `24` | Disk budget for the ETag cache. It is parsed on every boot, so it is really a memory budget; a cache file over this plus 8 MB is set aside unread at boot |
 | `GITHUB_API_URL` | `https://api.github.com` | Point at GitHub Enterprise |
 | `PORT` | `3002` | Server port |
 | `HOST_BIND` | `127.0.0.1` | Host interface compose binds the port to (compose only). Set to the box's LAN IP for LAN access; never a WAN-facing interface. |

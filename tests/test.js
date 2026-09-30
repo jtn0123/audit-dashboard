@@ -1,12 +1,20 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 process.env.PORT = '0';
 // Keep the GitHub collector inert: these tests cover routing and degraded states.
 delete process.env.GITHUB_TOKEN;
 delete process.env.GH_TOKEN;
 process.env.GH_AUTO_REFRESH = 'false';
+// The default cache path is the checkout's own .cache/, so a developer's real
+// cache would otherwise leak into the "no data" assertions below.
+const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-test-'));
+process.env.GH_CACHE_FILE = path.join(cacheDir, 'github.json');
+process.env.GH_HISTORY_FILE = path.join(cacheDir, 'history.json');
 
 function get(port, urlPath) {
   return new Promise((resolve, reject) => {
@@ -58,6 +66,7 @@ before(async () => {
 });
 
 after(() => {
+  fs.rmSync(cacheDir, { recursive: true, force: true });
   if (!server) return;
   // Keep-alive sockets outlive close(); without this the process never exits.
   server.closeAllConnections?.();

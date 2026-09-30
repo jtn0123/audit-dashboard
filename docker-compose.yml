@@ -60,6 +60,7 @@ services:
       - GH_CACHE_FILE=${GH_CACHE_FILE:-/cache/github.json}
       - GH_HISTORY_FILE=${GH_HISTORY_FILE:-/cache/history.json}
       - GH_HISTORY_DAYS=${GH_HISTORY_DAYS:-}
+      - GH_CACHE_MAX_MB=${GH_CACHE_MAX_MB:-}
       - GH_SLA_CRITICAL_DAYS=${GH_SLA_CRITICAL_DAYS:-}
       - GH_SLA_HIGH_DAYS=${GH_SLA_HIGH_DAYS:-}
       - GH_SLA_MEDIUM_DAYS=${GH_SLA_MEDIUM_DAYS:-}
