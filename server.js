@@ -324,4 +324,16 @@ if (ghConfig.enabled) {
   console.log('GitHub integration disabled — set GITHUB_TOKEN to enable the Patch view');
 }
 
-app.listen(PORT, () => console.log(`Audit dashboard on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Audit dashboard on port ${PORT}`));
+
+// Node is PID 1 in the container, where a signal with no handler is ignored:
+// `docker stop` would wait out its grace period and SIGKILL, so every
+// redeploy looked like a crash (exit 137) and cut any scan off mid-write.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    console.log(`${signal} received — shutting down`);
+    collector.shutdown();
+    server.closeAllConnections?.();
+    server.close(() => process.exit(0));
+  });
+}
