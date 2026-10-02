@@ -74,6 +74,12 @@ scenario() {
   if [ "$aside" != "$set_aside" ]; then
     echo "FAIL: expected oversized cache set aside=$set_aside, got $aside"; exit 1
   fi
+
+  # Node is PID 1: without a SIGTERM handler `docker stop` times out and
+  # SIGKILLs, so a clean redeploy is indistinguishable from a crash (137).
+  docker stop -t 10 "$id" >/dev/null
+  local code; code=$(docker inspect -f '{{.State.ExitCode}}' "$id")
+  if [ "$code" != 0 ]; then echo "FAIL: stop exited $code, expected a clean 0"; exit 1; fi
   echo "   ok"
 }
 
