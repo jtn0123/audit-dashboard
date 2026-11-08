@@ -35,7 +35,7 @@ async function api(method, path, timeoutMs = 20_000) {
 const TOOLS = [
   {
     name: 'get_status',
-    description: 'Dashboard + GitHub integration status: token state, last scan time, rate limit, data freshness, errors. Always answers, even unconfigured.',
+    description: 'Dashboard + GitHub integration status: token state, last scan time, rate limit, data freshness, errors. lastRefreshError is set while scans are failing outright (e.g. an expired token) — the data is then the last good scan, however old. Always answers, even unconfigured.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run: () => api('GET', '/api/gh/status')
   },

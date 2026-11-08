@@ -75,7 +75,9 @@ app.get('/health', (req, res) => {
       fetchedAt: status.fetchedAt,
       stale: status.freshness.stale,
       repoCount: status.repoCount,
-      errorCount: status.errors.length
+      errorCount: status.errors.length,
+      scanFailing: Boolean(status.lastRefreshError),
+      lastRefreshError: status.lastRefreshError
     },
     alerts: summary?.alerts || { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
     coveragePercent: summary?.coverage?.percent ?? null,

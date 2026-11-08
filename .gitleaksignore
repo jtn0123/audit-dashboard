@@ -1,0 +1,7 @@
+# Reviewed false positives. Format: <commit>:<file>:<rule-id>:<line>
+# A fingerprint suppresses exactly one finding; anything new still fires.
+
+# Test fixture, not a credential: the server test sets a placeholder webhook
+# secret so the server boots with GH_ALLOW_WRITES on. Full-history scans have
+# reported it every week since 2026-09-13.
+f8526c6358f1d2078ceff9ac0f19cdd0197c259c:tests/server-github.test.js:bare-credential-assignment:131
