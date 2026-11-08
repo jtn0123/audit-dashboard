@@ -571,6 +571,16 @@ a:focus-visible, button:focus-visible, input:focus-visible,
 .repo-trend { display: flex; align-items: center; }
 .sparkline { display: block; overflow: visible; }
 
+/* Scans failing outright */
+.scan-failure-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3);
+  border-left: 3px solid var(--red); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 16px; font-size: 0.85rem;
+}
+.scan-failure-banner strong { color: var(--red); }
+.scan-failure-msg { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+
 /* "Since your last visit" */
 .changes-banner {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
