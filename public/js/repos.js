@@ -140,6 +140,22 @@ function sparkline(values, { width = 68, height = 18 } = {}) {
   </svg>`;
 }
 
+/**
+ * Scans failing outright (expired token, ...). The board keeps showing the
+ * last good data underneath, so this has to say loudly that it is old.
+ */
+function renderScanFailureBanner(status) {
+  const f = status.lastRefreshError;
+  if (!f) return '';
+  const tokenProblem = /\b401\b|token/i.test(f.message);
+  return `<div class="scan-failure-banner" role="alert">
+    <strong>Scans are failing</strong>
+    <span>since ${esc(relTime(f.since))} · ${esc(String(f.count))} attempt${f.count === 1 ? '' : 's'} · showing data from ${esc(relTime(status.fetchedAt))}</span>
+    <span class="scan-failure-msg">${esc(f.message)}</span>
+    ${tokenProblem ? '<a href="#/settings">Replace the token →</a>' : ''}
+  </div>`;
+}
+
 /** The "what moved since you last looked" banner. */
 function renderChangesBanner() {
   const c = ghState.changes;
@@ -199,7 +215,7 @@ async function renderPatch() {
   if (!state.status.configured) { app.innerHTML = renderSetupScreen(); return; }
   if (!state.repos.length) {
     app.innerHTML = `<div class="empty"><div class="icon">🔍</div><h3>No repositories collected yet</h3>
-      <p>The first scan can take a minute. ${state.status.errors?.length ? esc(state.status.errors[0].message) : ''}</p>
+      <p>The first scan can take a minute. ${esc(state.status.lastRefreshError?.message || state.status.errors?.[0]?.message || '')}</p>
       <button class="refresh-btn" onclick="refreshGitHub(this)" style="margin-top:16px">↻ Scan now</button></div>`;
     return;
   }
@@ -209,6 +225,7 @@ async function renderPatch() {
 
   app.innerHTML = `
     ${renderPatchHeader(state.status)}
+    ${renderScanFailureBanner(state.status)}
     ${renderChangesBanner()}
     ${renderKpis(summary, staleDays)}
     ${renderControls()}
