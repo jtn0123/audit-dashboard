@@ -38,6 +38,6 @@ jobs:
         # without anyone noticing: a code-quality report should never be able to
         # block a merge on its own. Findings still appear on sonarcloud.io.
         continue-on-error: true
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
